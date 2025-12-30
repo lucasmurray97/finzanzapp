@@ -1,7 +1,7 @@
 .custom-accordion .accordion-button {
   background-color: transparent !important;
-  color: black !important;
-  border-color: #999 !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
 }
 
 .custom-accordion .accordion-button:focus,
@@ -13,6 +13,6 @@
 }
 
 .custom-accordion .accordion-collapse {
-  background-color: white !important;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2); /* Puedes ajustar el valor rgba según tus preferencias */
+  background-color: rgba(20, 26, 38, 0.9) !important;
+  box-shadow: 0 12px 30px rgba(2, 4, 8, 0.7);
 }

@@ -15,3 +15,17 @@ python manage.py runserver
 ```
 
 Esto iniciará la aplicación en la dirección *http://127.0.0.1:8000/*. Al acceder a la dirección se mostrará el formulario de inicio de sesión. Si no se tiene una cuenta, hay un link al formulario de registro bajo el formulario. Una vez registrado, se inicia sesión y se redirige al usuario a la vista principal, desde donde se puede acceder a todas las funcionalidades de Finanzapp.
+
+## Gmail + GPT (nuevas funciones)
+
+Para sincronizar Gmail automáticamente debes configurar credenciales OAuth en Google Cloud y definir las variables de entorno:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI` (por ejemplo `http://127.0.0.1:8000/gmail/callback/`)
+
+### .env local (opcional)
+
+Puedes crear un archivo `.env` en la raíz del repo (usa `.env.example` como plantilla) y el servidor lo cargará automáticamente al iniciar.
+
+Para categorización automática con GPT, agrega tu API key desde la sección “Organízate”. Cada usuario guarda su propia key y puede activar/desactivar GPT.

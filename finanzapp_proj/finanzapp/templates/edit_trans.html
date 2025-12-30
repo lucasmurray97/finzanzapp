@@ -1,90 +1,43 @@
 {% extends 'base.html' %}
 {% block content %}
-<section class="bg-light">
-  <div class="container py-5 rounded">
-    <div class="row">
-      <div class="col-md-8 m-auto">
-        <div class="card">
-          <div class="card-body">
-            <h1 class="text-center mb-4">Modificar</h1>
-            <form action="/actualizarTrans/{{ transaction.id }}" method="post">
-              {% csrf_token %}
-              
-              <div class="accordion" id="accordionForm">
-                <div class="accordion-item">
-                  <h2 class="accordion-header" id="typeHeading">
-                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#typeCollapse" aria-expanded="true" aria-controls="typeCollapse">
-                      Tipo
-                    </button>
-                  </h2>
-                  <div id="typeCollapse" class="accordion-collapse collapse show" aria-labelledby="typeHeading" data-bs-parent="#accordionForm">
-                    <div class="accordion-body">
-                      <div class="form-group">
-                        {% for choice in form.type.field.choices %}
-                          <div class="form-check">
-                            <input class="form-check-input" type="radio" name="{{ form.type.name }}" id="{{ form.type.id_for_label }}_{{ forloop.counter }}" value="{{ choice.0 }}" {% if choice.0 == form.type.value %}checked{% endif %}>
-                            <label class="form-check-label" for="{{ form.type.id_for_label }}_{{ forloop.counter }}">
-                              {{ choice.1 }}
-                            </label>
-                          </div>
-                        {% endfor %}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="accordion-item">
-                  <h2 class="accordion-header" id="categoryHeading">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#categoryCollapse" aria-expanded="false" aria-controls="categoryCollapse">
-                      Categoría
-                    </button>
-                  </h2>
-                  <div id="categoryCollapse" class="accordion-collapse collapse" aria-labelledby="categoryHeading" data-bs-parent="#accordionForm">
-                    <div class="accordion-body">
-                      <div class="form-group">
-                        {% for choice in form.category.field.choices %}
-                          <div class="form-check">
-                            <input class="form-check-input" type="radio" name="{{ form.category.name }}" id="{{ form.category.id_for_label }}_{{ forloop.counter }}" value="{{ choice.0 }}" {% if choice.0 == form.category.value %}checked{% endif %}>
-                            <label class="form-check-label" for="{{ form.category.id_for_label }}_{{ forloop.counter }}">
-                              {{ choice.1 }}
-                            </label>
-                          </div>
-                        {% endfor %}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <div class="mb-3">
-                <label for="{{ form.description.id_for_label }}">Descripción:</label>
-                <div>
-                  <textarea class="form-control" id="{{ form.description.id_for_label }}" name="{{ form.description.html_name }}" cols="40" rows="6">{{ form.description.value }}</textarea>
-                </div>
-              </div>
-              
-              <div class="row">
-                <div class="col-md-6">
-                  <div class="form-group">
-                    <label for="{{ form.amount.id_for_label }}">Cantidad:</label>
-                    <input type="number" class="form-control" id="{{ form.amount.id_for_label }}" name="{{ form.amount.name }}" value="{{ form.amount.value|floatformat}}" required>
-                  </div>
-                </div>
-                <div class="col-md-6">
-                  <div class="form-group">
-                    <label for="{{ form.date.id_for_label }}">Fecha:</label>
-                    <input type="date" class="form-control" id="{{ form.date.id_for_label }}" name="{{ form.date.name }}" value="{{ form.date.value|date:'Y-m-d' }}">
-                  </div>
-                </div>
-              </div>
-              
-              <button type="submit" class="btn btn-success btn-lg px-3 text-light">Actualizar</button>
-              <a href="/list" class="btn btn-danger btn-lg px-3 text-light">Cancelar</a>
-            </form>
-          </div>
-        </div>
+<div class="app-shell">
+  <section class="panel">
+    <div class="section-header">
+      <div>
+        <span class="eyebrow">Editar gasto</span>
+        <h2>Modificar transacción</h2>
+        <p class="text-muted">Ajusta descripción, fecha o categoría.</p>
       </div>
     </div>
-  </div>
-</section>
+    <form action="/actualizarTrans/{{ transaction.id }}" method="post" class="panel-form">
+      {% csrf_token %}
+      <div class="field-grid">
+        <div class="form-group">
+          <label for="{{ form.category.id_for_label }}">Categoría</label>
+          <select name="{{ form.category.name }}" id="{{ form.category.id_for_label }}" class="form-control">
+            {% for choice in form.category.field.choices %}
+              <option value="{{ choice.0 }}" {% if choice.0 == form.category.value %}selected{% endif %}>{{ choice.1 }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="{{ form.amount.id_for_label }}">Monto</label>
+          <input type="number" class="form-control" id="{{ form.amount.id_for_label }}" name="{{ form.amount.name }}" value="{{ form.amount.value|floatformat }}" required>
+        </div>
+        <div class="form-group">
+          <label for="{{ form.date.id_for_label }}">Fecha</label>
+          <input type="date" class="form-control" id="{{ form.date.id_for_label }}" name="{{ form.date.name }}" value="{{ form.date.value|date:'Y-m-d' }}">
+        </div>
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label for="{{ form.description.id_for_label }}">Descripción</label>
+          <textarea class="form-control" id="{{ form.description.id_for_label }}" name="{{ form.description.html_name }}" cols="40" rows="5">{{ form.description.value }}</textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-success btn-lg px-3 text-light">Actualizar</button>
+        <a href="/list" class="btn btn-outline-dark btn-lg px-3">Cancelar</a>
+      </div>
+    </form>
+  </section>
+</div>
 {% endblock %}
-

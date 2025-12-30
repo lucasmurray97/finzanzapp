@@ -9,7 +9,7 @@ class RegisterUserForm(forms.Form):
 class EditTransactionForm(forms.ModelForm):
     class Meta:
         model = Transaction
-        fields = ["type", "description", "amount", "date", "category"]
+        fields = ["description", "amount", "date", "category"]
 
     def __init__(self, *args, **kwargs):
         user = kwargs.pop('user', None)
@@ -21,5 +21,4 @@ class EditCategoryForm(forms.ModelForm):
     class Meta:
         model = Category
         fields= ["name", "budget"]
-
 

@@ -2,15 +2,24 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.contrib.auth import authenticate, login, logout
 from django.shortcuts import redirect, render
-from finanzapp.models import User, Transaction, Category
+from finanzapp.models import User, Transaction, Category, MonthlyBudget, SavingsWithdrawal, GmailCredential, GmailMessage
 from finanzapp.forms import RegisterUserForm, EditTransactionForm, EditCategoryForm
 from django.utils import timezone
 from django.db.models import Sum
+from django.db import IntegrityError
 import sys
 from django.views.decorators.csrf import csrf_exempt
 import json
 import datetime
+import base64
+import os
+import re
+import html
+import logging
 # Create your views here.
+
+# Logs to the Django console for sync debugging.
+logger = logging.getLogger(__name__)
 
 #-------------22/04/23----- Manuel y Felipe----->
 def login_1(request):
@@ -39,7 +48,7 @@ def register(request):
         contraseña = request.POST['contraseña']
         display = request.POST['display_name']
         #Se crea el nuevo usuario
-        user = User.objects.create_user(username=nombre, password=contraseña, display_name=display, budget = sys.float_info.max)
+        user = User.objects.create_user(username=nombre, password=contraseña, display_name=display, budget=None)
         user.save()
         # Se crea la categoría ninguna por default:
         category = Category(name="ninguna", budget=0, user=user)
@@ -62,12 +71,14 @@ def logout_view(request): #View para cerrar sesión
 #funcion auxiliar que devuelve el saldo disponible de cierto usuario
 def saldo_disponible(user):
     user_id = user.id
-    #esto devuelve el total de montos de transacciones etiquetas como depositos
-    #esto devuelve el total de montos de transacciones etiquetas como gastos
-    month = datetime.date.today().month
-    gastos = Transaction.objects.filter(user_id=user_id, type='spend', date__month=month).exclude(description = "Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
-    ingresos = Transaction.objects.filter(user_id=user_id, type='deposit', date__month=month).exclude(description = "Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
-    budget = user.budget - gastos + ingresos
+    current_date = timezone.now().date()
+    month = current_date.month
+    gastos = Transaction.objects.filter(user_id=user_id, date__month=month).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+    month_start = _month_start(current_date)
+    month_budget = MonthlyBudget.objects.filter(user=user, month=month_start).first()
+    if not month_budget or month_budget.budget is None:
+        return 0, gastos
+    budget = month_budget.budget - gastos
     #devuelve la resta entre depositos y gastos
     return budget, gastos
 
@@ -75,10 +86,264 @@ def saldo_disponible(user):
 def saldo_categoría(user_id, cat):
     budget = cat.budget
     month = datetime.date.today().month
-    gastos = Transaction.objects.filter(user_id=user_id, type='spend', category=cat, date__month=month).aggregate(Sum('amount'))['amount__sum'] or 0
-    ingresos = Transaction.objects.filter(user_id=user_id, type='deposit', category=cat, date__month=month).aggregate(Sum('amount'))['amount__sum'] or 0
-    saldo = budget - gastos + ingresos
+    gastos = Transaction.objects.filter(user_id=user_id, category=cat, date__month=month).aggregate(Sum('amount'))['amount__sum'] or 0
+    saldo = budget - gastos
     return {'name': cat.name, "id": cat.id, 'amount': saldo, 'valid': (saldo >= 0)}
+
+def _month_start(date_value):
+    return date_value.replace(day=1)
+
+def _next_month(date_value):
+    if date_value.month == 12:
+        return date_value.replace(year=date_value.year + 1, month=1, day=1)
+    return date_value.replace(month=date_value.month + 1, day=1)
+
+def _month_range(date_value):
+    start = _month_start(date_value)
+    end = _next_month(start)
+    return start, end
+
+def _month_label(date_value):
+    return date_value.strftime("%b %Y")
+
+def _shift_month(date_value, months):
+    month_index = date_value.month - 1 + months
+    year = date_value.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    return date_value.replace(year=year, month=month, day=1)
+
+def _decode_gmail_body(payload):
+    if not payload:
+        return ""
+    body_data = payload.get("body", {}).get("data")
+    if body_data:
+        try:
+            return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+    parts = payload.get("parts", [])
+    html_payloads = []
+    for part in parts:
+        mime_type = part.get("mimeType", "")
+        if mime_type == "text/plain":
+            decoded = _decode_gmail_body(part)
+            if decoded:
+                return decoded
+        if mime_type == "text/html":
+            html_payloads.append(part)
+    for part in html_payloads:
+        decoded = _decode_gmail_body(part)
+        if decoded:
+            cleaned = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", decoded)
+            cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+            cleaned = html.unescape(cleaned)
+            return cleaned
+    for part in parts:
+        decoded = _decode_gmail_body(part)
+        if decoded:
+            return decoded
+    return ""
+
+def _get_header(headers, name):
+    for header in headers:
+        if header.get("name", "").lower() == name.lower():
+            return header.get("value", "")
+    return ""
+
+def _extract_relevant_text(text):
+    if not text:
+        return ""
+    lowered = text.lower()
+    marker = "te informamos que se ha realizado una compra por"
+    start = lowered.find(marker)
+    if start != -1:
+        snippet = text[start:]
+        for stop in ["Revisa", "\n"]:
+            stop_idx = snippet.find(stop)
+            if stop_idx != -1:
+                snippet = snippet[:stop_idx]
+                break
+        return snippet.strip().rstrip(".") + "."
+    match = re.search(r"(Te informamos.*?)(Revisa|$)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().rstrip(".") + "."
+    match = re.search(r"(compra por .*?)(?:\\.|$)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().rstrip(".") + "."
+    return ""
+
+def _parse_purchase_email(text):
+    if not text:
+        return None
+    normalized = " ".join(text.split())
+    try:
+        primary_match = re.search(
+            r"compra por \$?([\d\.,]+)\s+con (?:Tarjeta de Crédito|cargo a Cuenta)\s+(\*+\d+)\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})",
+            normalized,
+            re.IGNORECASE,
+        )
+        amount_match = re.search(r"compra por \$?([\d\.,]+)", normalized, re.IGNORECASE)
+        merchant_match = re.search(r"en\s+(.+?)\s+el\s+\d{2}/\d{2}/\d{4}", normalized, re.IGNORECASE)
+        account_match = re.search(r"(?:Tarjeta de Crédito|Cuenta)\s+(\*+\d+)", normalized, re.IGNORECASE)
+        datetime_match = re.search(r"el\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})", normalized)
+    except re.error:
+        logger.exception("Gmail sync: regex failed to compile")
+        return None
+    if not amount_match or not datetime_match:
+        return None
+    if primary_match:
+        amount_raw = primary_match.group(1).replace(".", "").replace(",", "")
+        account = primary_match.group(2).strip()
+        merchant = primary_match.group(3).strip()
+        date_str = primary_match.group(4)
+        time_str = primary_match.group(5)
+    else:
+        amount_raw = amount_match.group(1).replace(".", "").replace(",", "")
+        merchant = merchant_match.group(1).strip() if merchant_match else ""
+        account = account_match.group(1).strip() if account_match else ""
+        date_str = datetime_match.group(1)
+        time_str = datetime_match.group(2)
+    amount = float(amount_raw)
+    description = _extract_relevant_text(text) or merchant
+    try:
+        purchase_date = datetime.datetime.strptime(date_str, "%d/%m/%Y").date()
+        purchase_time = datetime.datetime.strptime(time_str, "%H:%M").time()
+    except ValueError:
+        return None
+    return {
+        "amount": amount,
+        "merchant": merchant,
+        "account": account,
+        "description": description,
+        "purchase_date": purchase_date,
+        "purchase_time": purchase_time,
+    }
+
+def _categorize_description(user, description):
+    categories = list(Category.objects.filter(user=user).exclude(name="ninguna"))
+    if not categories:
+        return Category.objects.filter(user=user, name="ninguna").first()
+    description_lower = description.lower()
+    for category in categories:
+        if category.name.lower() in description_lower:
+            return category
+    if user.use_gpt and user.openai_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=user.openai_api_key)
+            category_names = [cat.name for cat in categories]
+            prompt = (
+                "Clasifica la siguiente transaccion en una de estas categorias exactas: "
+                f"{', '.join(category_names)}. Si no aplica, responde exactamente 'ninguna'. "
+                f"Transaccion: {description}"
+            )
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Responde solo con el nombre exacto de la categoria."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+            )
+            suggestion = response.choices[0].message.content.strip()
+            for category in categories:
+                if suggestion.lower() == category.name.lower():
+                    return category
+        except Exception:
+            return Category.objects.filter(user=user, name="ninguna").first()
+    return Category.objects.filter(user=user, name="ninguna").first()
+
+def _get_gmail_service(user):
+    credential = GmailCredential.objects.filter(user=user).first()
+    if not credential:
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+    except ImportError:
+        return None
+    creds_data = json.loads(credential.credentials_json)
+    creds = Credentials.from_authorized_user_info(creds_data)
+    if creds.expired and creds.refresh_token:
+        try:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            credential.credentials_json = creds.to_json()
+            credential.save()
+        except Exception:
+            return None
+    return build("gmail", "v1", credentials=creds)
+
+def _sync_gmail_month(user, month_date):
+    service = _get_gmail_service(user)
+    if not service:
+        logger.warning("Gmail sync: no service for user=%s", user.id)
+        return {"created": 0, "total": 0, "parsed": 0}
+    start, end = _month_range(month_date)
+    query = (
+        '(subject:"Compra con Tarjeta de Crédito" OR subject:"Cargo en Cuenta") '
+        f'in:anywhere after:{start.strftime("%Y/%m/%d")} before:{end.strftime("%Y/%m/%d")}'
+    )
+    logger.info("Gmail sync query for user=%s: %s", user.id, query)
+    created = 0
+    total = 0
+    parsed_count = 0
+    page_token = None
+    try:
+        while True:
+            response = service.users().messages().list(userId="me", q=query, pageToken=page_token).execute()
+            logger.info("Gmail sync batch user=%s messages=%s", user.id, len(response.get("messages", [])))
+            messages = response.get("messages", [])
+            for msg in messages:
+                total += 1
+                gmail_id = msg.get("id")
+                if GmailMessage.objects.filter(user=user, gmail_id=gmail_id).exists():
+                    continue
+                full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
+                payload = full.get("payload", {})
+                headers = payload.get("headers", [])
+                subject = _get_header(headers, "Subject")
+                snippet = full.get("snippet", "")
+                body_text = _decode_gmail_body(payload)
+                parsed = _parse_purchase_email(body_text or snippet)
+                if not parsed:
+                    logger.info("Gmail sync: no parse match user=%s subject=%s snippet=%s", user.id, subject, snippet)
+                    continue
+                parsed_count += 1
+                try:
+                    GmailMessage.objects.get_or_create(
+                        user=user,
+                        gmail_id=gmail_id,
+                        defaults={
+                            "subject": subject,
+                            "snippet": snippet,
+                            "amount": parsed["amount"],
+                            "merchant": parsed["merchant"],
+                            "account": parsed["account"],
+                            "purchase_date": parsed["purchase_date"],
+                            "purchase_time": parsed["purchase_time"],
+                        },
+                    )
+                except IntegrityError:
+                    logger.info("Gmail sync: duplicate gmail_id user=%s id=%s", user.id, gmail_id)
+                    continue
+                category = _categorize_description(user, parsed["merchant"] or subject or "Compra")
+                Transaction.objects.create(
+                    user=user,
+                    description=parsed.get("description") or parsed["merchant"] or subject or "Compra con tarjeta",
+                    amount=parsed["amount"],
+                    date=parsed["purchase_date"],
+                    category=category,
+                )
+                created += 1
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        GmailCredential.objects.filter(user=user).update(last_synced_at=timezone.now())
+    except Exception:
+        logger.exception("Gmail sync failed for user=%s", user.id)
+        return {"created": created, "total": total, "parsed": parsed_count}
+    return {"created": created, "total": total, "parsed": parsed_count}
 
 def index(request):
     # Cuando se carga la página
@@ -87,8 +352,24 @@ def index(request):
         if request.user.is_authenticated:
             # Se recupera el usuario
             user_id= request.user.id
+            selected_month = request.GET.get("month")
+            active_date = timezone.now().date()
+            if selected_month:
+                try:
+                    active_date = datetime.datetime.strptime(selected_month, "%Y-%m").date()
+                except ValueError:
+                    active_date = timezone.now().date()
+            month_start, month_end = _month_range(active_date)
             #se calcula el saldo disponible para el usuario ya logeado
-            budget, gastos = saldo_disponible(request.user)
+            budget = 0
+            gastos = Transaction.objects.filter(
+                user=request.user,
+                date__gte=month_start,
+                date__lt=month_end,
+            ).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+            month_budget_for_balance = MonthlyBudget.objects.filter(user=request.user, month=month_start).first()
+            if month_budget_for_balance and month_budget_for_balance.budget is not None:
+                budget = month_budget_for_balance.budget - gastos
             # Se cargan todas las categorias del usuario
             categories = Category.objects.filter(user=user_id)
             budgets = []
@@ -98,8 +379,57 @@ def index(request):
                 if saldo_cat["valid"]:
                     positive.append(saldo_cat)
                 budgets.append(saldo_cat)
+            today = active_date
+            month_budget = MonthlyBudget.objects.filter(user=request.user, month=month_start).first()
+            if not month_budget:
+                month_budget = MonthlyBudget(user=request.user, month=month_start, salary=0, budget=0)
+            spends_sum = Transaction.objects.filter(user=request.user, date__range=[month_start, month_end]).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+            effective_spend = max(month_budget.budget, spends_sum)
+            month_savings = month_budget.salary - effective_spend
+            gmail_connected = GmailCredential.objects.filter(user=request.user).exists()
+            if gmail_connected:
+                credential = GmailCredential.objects.filter(user=request.user).first()
+                last_synced = credential.last_synced_at
+                if not last_synced or (timezone.now() - last_synced).total_seconds() > 900:
+                    _sync_gmail_month(request.user, month_start)
+            chart_labels = []
+            chart_values = []
+            chart_cumulative = []
+            running_total = 0
+            for offset in range(5, -1, -1):
+                month_date = _shift_month(month_start, -offset)
+                start, end = _month_range(month_date)
+                budget_row = MonthlyBudget.objects.filter(user=request.user, month=start).first()
+                if not budget_row:
+                    budget_row = MonthlyBudget(user=request.user, month=start, salary=0, budget=0)
+                spends = Transaction.objects.filter(user=request.user, date__range=[start, end]).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+                effective_spend = max(budget_row.budget, spends)
+                month_value = budget_row.salary - effective_spend
+                chart_labels.append(_month_label(start))
+                chart_values.append(month_value)
+                running_total += month_value
+                chart_cumulative.append(running_total)
+            total_withdrawals = SavingsWithdrawal.objects.filter(user=request.user).aggregate(Sum('amount'))['amount__sum'] or 0
+            total_savings = sum(chart_values) - total_withdrawals
+            withdrawals = SavingsWithdrawal.objects.filter(user=request.user).order_by('-date')
             #se guarda como diccionario
-            context = {'budget': budget, "gastos": gastos,'categories': categories, 'today': timezone.now().strftime("%Y-%m-%d"), 'budgets': budgets, "positive": positive}
+            context = {
+                'budget': budget,
+                "gastos": gastos,
+                'categories': categories,
+                'today': timezone.now().strftime("%Y-%m-%d"),
+                'budgets': budgets,
+                "positive": positive,
+                'month_budget': month_budget,
+                'month_label': month_start.strftime("%Y-%m"),
+                'month_savings': month_savings,
+                'chart_labels': json.dumps(chart_labels),
+                'chart_values': json.dumps(chart_values),
+                'chart_cumulative': json.dumps(chart_cumulative),
+                'total_savings': total_savings,
+                'withdrawals': withdrawals,
+                'gmail_connected': gmail_connected,
+            }
             # Se renderiza la página
             return render(request, 'index.html', context)
         # Si el usuario no está autenticado, se redirecciona al login
@@ -110,14 +440,16 @@ def index(request):
         # Se recupera el usuario
         user = request.user
         # Se recuperan los campos del formulario
-        type = request.POST['type']
         description = request.POST['description']
         amount = request.POST['amount']
         date = request.POST['date']
         category = request.POST['category']
-        cat = Category.objects.filter(user=user, name=category).first()
+        if category == "__auto__":
+            cat = _categorize_description(user, description)
+        else:
+            cat = Category.objects.filter(user=user, name=category).first()
         # Se crea un objeto transacción
-        transaction = Transaction.objects.create(user=user, type=type, description=description, amount=amount, date=date, category=cat)
+        transaction = Transaction.objects.create(user=user, description=description, amount=amount, date=date, category=cat)
         transaction.save()
         # Se vuelve a la misma página
         return redirect('index')
@@ -139,33 +471,14 @@ def list_transactions(request):
         # Obtener parámetros de fecha seleccionados
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
-        month = datetime.date.today().month
         if selected_cats:
-            for cat_id in selected_cats:
-                cat = Category.objects.get(id=cat_id)
-                # Filtrar transacciones por categoría
-                trans = Transaction.objects.filter(category=cat)
+            cats = cats.filter(id__in=selected_cats)
 
-                if start_date and end_date:
-                    # Filtrar transacciones por rango de fecha
-                    trans = trans.filter(date__range=[start_date, end_date])
-                else:
-                    trans = trans.filter(date__month = month)
-
-                transactions.append({'name': cat.name, 'trans': trans})
-
-        else:
-            for cat in cats:
-                # Filtrar transacciones por categoría
-                trans = Transaction.objects.filter(category=cat)
-
-                if start_date and end_date:
-                    # Filtrar transacciones por rango de fecha
-                    trans = trans.filter(date__range=[start_date, end_date])
-                else:
-                    trans = trans.filter(date__month = month)
-
-                transactions.append({'name': cat.name, 'trans': trans})
+        for cat in cats:
+            trans = Transaction.objects.filter(category=cat)
+            if start_date and end_date:
+                trans = trans.filter(date__range=[start_date, end_date])
+            transactions.append({'name': cat.name, 'trans': trans})
                 
         #debe tener budgets para mostrar el estado
         budgets = []
@@ -239,7 +552,7 @@ def organize_fin(request):
         # Recibimos el formulario
         if request.method == 'POST':
             # Si se tienen como campos a name y budget, es el formulario de categoría
-            if 'name' and 'budget' in request.POST:
+            if 'name' in request.POST and 'budget' in request.POST:
                 # Recuperamos ambos valores
                 name = request.POST['name']
                 # Recuperamos el presupuesto ingresado
@@ -249,25 +562,54 @@ def organize_fin(request):
                 category.save()
                 # Redirigimos al usuario a la vista organiza tus finanzas
                 return redirect('organiza_finanzas')
-            # Si tiene como campo a global_budget era el formulario de presupuesto
-            if 'global_budget' in request.POST:
-                # recuperamos el valor
-                global_budget = request.POST['global_budget']
-                # Sacamos las comas del string y actualizamos el valor en el user
-                request.user.budget = float(global_budget.replace(",",""))
-                # guardamos los cambios
+            if 'salary' in request.POST and 'budget' in request.POST:
+                month = request.POST.get('budget_month')
+                try:
+                    month_date = datetime.datetime.strptime(month, "%Y-%m").date()
+                except (TypeError, ValueError):
+                    month_date = timezone.now().date()
+                month_start = _month_start(month_date)
+                budget_row, _ = MonthlyBudget.objects.get_or_create(user=request.user, month=month_start)
+                salary = request.POST.get('salary')
+                budget = request.POST.get('budget')
+                savings = request.POST.get('month_savings')
+                if salary and budget:
+                    budget_row.salary = float(salary or 0)
+                    budget_row.budget = float(budget or 0)
+                elif salary and savings:
+                    budget_row.salary = float(salary or 0)
+                    budget_row.budget = float(salary or 0) - float(savings or 0)
+                elif budget and savings:
+                    budget_row.salary = float(budget or 0) + float(savings or 0)
+                    budget_row.budget = float(budget or 0)
+                budget_row.save()
+                return redirect('organiza_finanzas')
+            if 'use_gpt' in request.POST or 'openai_api_key' in request.POST:
+                request.user.use_gpt = request.POST.get('use_gpt') == 'on'
+                api_key = request.POST.get('openai_api_key') or ''
+                request.user.openai_api_key = api_key.strip()
                 request.user.save()
-                # Redirigimos al usuario a la vista organiza tus finanzas
                 return redirect('organiza_finanzas')
         # Si estamos cargando la página
         else:
-            global_budget = request.user.budget 
-            if global_budget == sys.float_info.max:
-                global_budget = None
             # Cargamos las categorías del usuario
             categories = Category.objects.filter(user = request.user)
             # Cargamos la página
-            return render(request, 'organiza_finanzas.html', {'categories': categories, 'global_budget': global_budget})
+            month_start = _month_start(timezone.now().date())
+            budget_row = MonthlyBudget.objects.filter(user=request.user, month=month_start).first()
+            if not budget_row:
+                budget_row = MonthlyBudget(user=request.user, month=month_start, salary=0, budget=0)
+            return render(
+                request,
+                'organiza_finanzas.html',
+                {
+                    'categories': categories,
+                    'budget_row': budget_row,
+                    'budget_month': month_start.strftime("%Y-%m"),
+                    'use_gpt': request.user.use_gpt,
+                    'openai_api_key': request.user.openai_api_key or '',
+                },
+            )
     # Si no está autenticado
     else:
         # Se le redirige al login
@@ -366,12 +708,22 @@ def transfer_debt(request, id_categoria):
                 if c.name != "ninguna" and c.name != category.name:
                     saldo = saldo_categoría(user_id, c)
                     if modifications[i]:
-                        if int(modifications[i]) < 0:
-                            _ = Transaction.objects.create(user=request.user, type="spend", description="Transferencia interna", amount=(-int(modifications[i])), date=timezone.now().strftime("%Y-%m-%d"), category=c)
-                            _ = Transaction.objects.create(user=request.user, type="deposit", description="Transferencia interna", amount=(-int(modifications[i])), date=timezone.now().strftime("%Y-%m-%d"), category=category)
-                        else:
-                            _ = Transaction.objects.create(user=request.user, type="deposit", description="Transferencia interna", amount=int(modifications[i]), date=timezone.now().strftime("%Y-%m-%d"), category=c)
-                            _ = Transaction.objects.create(user=request.user, type="spend", description="Transferencia interna", amount=int(modifications[i]), date=timezone.now().strftime("%Y-%m-%d"), category=category)
+                        value = int(modifications[i])
+                        if value != 0:
+                            _ = Transaction.objects.create(
+                                user=request.user,
+                                description="Transferencia interna",
+                                amount=-value,
+                                date=timezone.now().strftime("%Y-%m-%d"),
+                                category=c,
+                            )
+                            _ = Transaction.objects.create(
+                                user=request.user,
+                                description="Transferencia interna",
+                                amount=value,
+                                date=timezone.now().strftime("%Y-%m-%d"),
+                                category=category,
+                            )
                     i+=1
                     
             return redirect('/')
@@ -393,18 +745,140 @@ def add_transaction_email(request):
         email = email.split('<')[1].split('>')[0]
         user = User.objects.filter(username=email)[0]
         amount = float(amount.replace('.', '').strip("'"))
-        # Se recuperan los campos del formulario
-        type = "spend"
         description = description.strip("'").replace('\n', ' ')
+        description = _extract_relevant_text(description) or description
         date = date.strip("'")
-        # Se marca como gasto sin categorizar
-        cat = Category.objects.filter(user=user.id, name="ninguna")[0]
+        # Se categoriza automaticamente cuando es posible
+        cat = _categorize_description(user, description)
         # Se crea un objeto transacción
         if len(Transaction.objects.filter(user=user, amount=amount, description=description, date=date)) == 0:
-            transaction = Transaction.objects.create(user=user, type=type, description=description, amount=amount, date=date, category=cat)
+            transaction = Transaction.objects.create(user=user, description=description, amount=amount, date=date, category=cat)
             transaction.save()
             # Logic to update database
         return JsonResponse({'status': 'success'})
     else:
         return JsonResponse({'status': 'error'}, status=405)
+
+def gmail_connect(request):
+    if not request.user.is_authenticated:
+        return redirect('login')
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+    if not client_id or not client_secret or not redirect_uri:
+        return JsonResponse({'status': 'error', 'message': 'Missing Google OAuth env vars.'}, status=400)
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except ImportError:
+        return JsonResponse({'status': 'error', 'message': 'Google auth libs not installed.'}, status=400)
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+    )
+    flow.redirect_uri = redirect_uri
+    authorization_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    request.session["gmail_oauth_state"] = state
+    return redirect(authorization_url)
+
+def gmail_callback(request):
+    if not request.user.is_authenticated:
+        return redirect('login')
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+    if not client_id or not client_secret or not redirect_uri:
+        return JsonResponse({'status': 'error', 'message': 'Missing Google OAuth env vars.'}, status=400)
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except ImportError:
+        return JsonResponse({'status': 'error', 'message': 'Google auth libs not installed.'}, status=400)
+    state = request.session.get("gmail_oauth_state")
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+        state=state,
+    )
+    flow.redirect_uri = redirect_uri
+    flow.fetch_token(authorization_response=request.build_absolute_uri())
+    creds = flow.credentials
+    gmail_user = request.user.username
+    GmailCredential.objects.update_or_create(
+        user=request.user,
+        defaults={
+            "email": gmail_user,
+            "credentials_json": creds.to_json(),
+            "last_synced_at": None,
+        },
+    )
+    return redirect('index')
+
+def gmail_sync(request):
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if not GmailCredential.objects.filter(user=request.user).exists():
+        return JsonResponse({'status': 'error', 'message': 'Gmail no conectado.'}, status=400)
+    month = request.GET.get("month")
+    resync = request.GET.get("resync") == "1"
+    if month:
+        try:
+            month_date = datetime.datetime.strptime(month, "%Y-%m").date()
+        except ValueError:
+            month_date = timezone.now().date()
+    else:
+        month_date = timezone.now().date()
+    if resync:
+        month_start, month_end = _month_range(_month_start(month_date))
+        Transaction.objects.filter(
+            user=request.user,
+            date__gte=month_start,
+            date__lt=month_end,
+        ).delete()
+        GmailMessage.objects.filter(
+            user=request.user,
+            purchase_date__gte=month_start,
+            purchase_date__lt=month_end,
+        ).delete()
+    result = _sync_gmail_month(request.user, _month_start(month_date))
+    return JsonResponse({'status': 'success', **result})
+
+@csrf_exempt
+def suggest_category(request):
+    if request.method != "POST":
+        return JsonResponse({'status': 'error'}, status=405)
+    if not request.user.is_authenticated:
+        return JsonResponse({'status': 'error'}, status=401)
+    data = json.loads(request.body or '{}')
+    description = data.get('description', '')
+    category = _categorize_description(request.user, description)
+    return JsonResponse({'status': 'success', 'category': category.name if category else 'ninguna'})
+
+def add_savings_withdrawal(request):
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if request.method != "POST":
+        return redirect('index')
+    date = request.POST.get('date')
+    amount = request.POST.get('amount')
+    note = request.POST.get('note', '')
+    if date and amount:
+        SavingsWithdrawal.objects.create(user=request.user, date=date, amount=amount, note=note)
+    return redirect('index')
         

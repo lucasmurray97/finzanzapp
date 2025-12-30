@@ -1,89 +1,181 @@
 {% extends 'base.html' %}
 {% load humanize %}
 {% block content %}
-<div style="margin-top: 20px;"></div>
-<div class="col-md-6 m-auto text-center">
-    <!-- <h1>Organiza tus categorías!</h1> -->
+<div class="app-shell">
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Categorías</span>
+                <h2>Organiza tus categorías</h2>
+                <p class="text-muted">Define tus límites por tipo de gasto.</p>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Presupuesto</th>
+                        <th></th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for category in categories %}
+                    {% if category.name != "ninguna" %}
+                    <tr>
+                        <td>{{ category.name }}</td>
+                        <td>{{ category.budget|floatformat:0|intcomma }}</td>
+                        <td>
+                            <a class="btn btn-outline-dark btn-sm action-btn" href="/editCat/{{ category.id }}" aria-label="Editar" title="Editar">
+                                <i class="fa fa-pen fa-fw" aria-hidden="true"></i>
+                                <span class="visually-hidden">Editar</span>
+                            </a>
+                        </td>
+                        <td>
+                            <a class="btn btn-outline-dark btn-sm action-btn" href="/eliminarCat/{{ category.id }}" aria-label="Eliminar" title="Eliminar">
+                                <i class="fa fa-times fa-fw" aria-hidden="true"></i>
+                                <span class="visually-hidden">Eliminar</span>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
 
-    <div class="container-fluid bg-light py-5 rounded">
-    <h2>Estas son tus categorías:</h2>
-    <div style="margin-top: 20px;"></div>
-        <table class="col-md-6 m-auto text-center">
-            <thead>
-                <tr>
-                    <th scope="col" style="border-bottom: 1px solid black; ">Nombre</th>
-                    <th scope="col" style="border-bottom: 1px solid black; ">Presupuesto</th>
-                    <th scope="col" style="border-bottom: 1px solid black; "></th>
-                    <th scope="col" style="border-bottom: 1px solid black; "></th>
-                </tr>
-            </thead>
-            {% for category in categories %}
-            {% if category.name != "ninguna" %}
-            <tr>
-                <td>{{ category.name }}</td>
-                <td>{{ category.budget|floatformat:0|intcomma }}</td>
-                <td><a class="btn btn-warning" href="/editCat/{{ category.id }}">Editar</a></td>
-                <td><a class="btn btn-danger" href="/eliminarCat/{{ category.id }}">Eliminar</a></td>
-            </tr>
-            {% endif %}
-            {% endfor %}
-        </table>
-    </div>
-    
-    <div style="margin-top: 20px;"></div>
-    <div class="container-fluid bg-light py-5 rounded">
-
-        <h2>Agrega una categoría:</h2>
-        <div style="margin-top: 20px;"></div>
-        <form method="post">
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Nueva categoría</span>
+                <h2>Agrega una categoría</h2>
+                <p class="text-muted">Define el presupuesto de referencia.</p>
+            </div>
+        </div>
+        <form method="post" class="panel-form">
             {% csrf_token %}
-            <div class="row">
-                <div class="form-group col-md-6 mb-3">
-                    <label for="name">Nombre:</label>
-                    <div class="another-custom-class">
-                        <input type="text" name="name" required>
-                    </div>
+            <div class="field-grid">
+                <div class="form-group">
+                    <label for="name">Nombre</label>
+                    <input type="text" name="name" required>
                 </div>
-
-                <div class="form-group col-md-6 mb-3">
-                    <label for="budget">Presupuesto:</label>
-                    <div class="another-custom-class">
-                        <input type="number" name="budget" required>
-                    </div>
+                <div class="form-group">
+                    <label for="budget">Presupuesto</label>
+                    <input type="number" name="budget" required>
                 </div>
             </div>
-            <div style="margin-top: 20px;"></div>
-            <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Agregar</button>
+            <div class="form-actions">
+                <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Agregar categoría</button>
+            </div>
         </form>
-    </div>
+    </section>
 
-    <div style="margin-top: 20px;"></div>
-    <div class="container-fluid bg-light py-5 rounded">
-
-        <h2>Edita tu presupuesto total:</h2>
-        <div style="margin-top: 20px;"></div>
-        <form method="post">
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Presupuesto mensual</span>
+                <h2>Configura tu mes</h2>
+                <p class="text-muted">Completa dos campos y el sistema calcula el resto.</p>
+            </div>
+        </div>
+        <form method="post" x-data="budgetForm({{ budget_row.salary|default:0 }}, {{ budget_row.budget|default:0 }})" @input="compute()" class="panel-form">
             {% csrf_token %}
-            <!-- <div class="row"> -->
+            <div class="field-grid">
                 <div class="form-group">
-                    {% if global_budget %}
-                    <label for="budget">Cambia tu presupuesto:</label>
-                        <div class="another-custom-class">
-                                <input name="global_budget" value= "{{ global_budget|floatformat:0|intcomma }}" required>
-                        </div>
-                    {% else %}
-                    <label for="budget">No has definido tu presupuesto!:</label>
-                    <div class="another-custom-class">
-                        <input name="global_budget" type="number" value= "" required>
+                    <label for="budget_month">Mes</label>
+                    <input type="month" name="budget_month" value="{{ budget_month }}" class="form-control" required>
                 </div>
-                    {% endif %}
+                <div class="form-group">
+                    <label for="salary">Salario</label>
+                    <input type="number" name="salary" x-model.number="salary" @input="lastChanged = 'salary'" class="form-control">
                 </div>
-            <!-- </div> -->
-            <div style="margin-top: 20px;"></div>
-            <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Modificar</button>
+                <div class="form-group">
+                    <label for="budget">Presupuesto del mes</label>
+                    <input type="number" name="budget" x-model.number="budget" @input="lastChanged = 'budget'" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="month_savings">Ahorro del mes</label>
+                    <input type="number" name="month_savings" x-model.number="savings" @input="lastChanged = 'savings'" class="form-control">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Guardar presupuesto mensual</button>
+            </div>
         </form>
-    </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Categorización</span>
+                <h2>Automatiza con GPT</h2>
+                <p class="text-muted">Activa sugerencias inteligentes para tus gastos.</p>
+            </div>
+        </div>
+        <form method="post" class="panel-form">
+            {% csrf_token %}
+            <div class="field-grid">
+                <div class="form-group">
+                    <label for="openai_api_key">OpenAI API Key</label>
+                    <input type="password" name="openai_api_key" value="{{ openai_api_key }}" class="form-control">
+                </div>
+                <div class="form-group toggle">
+                    <label>
+                        <input type="checkbox" name="use_gpt" {% if use_gpt %}checked{% endif %}>
+                        Usar GPT para sugerir categorías
+                    </label>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Guardar configuración</button>
+            </div>
+        </form>
+    </section>
 </div>
 
-<div style="margin-top: 20px;"></div>
+<script>
+    function budgetForm(initialSalary, initialBudget) {
+        const toNumber = (value) => {
+            if (value === '' || value === null || value === undefined) {
+                return null;
+            }
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+        return {
+            salary: toNumber(initialSalary) ?? 0,
+            budget: toNumber(initialBudget) ?? 0,
+            savings: (toNumber(initialSalary) ?? 0) - (toNumber(initialBudget) ?? 0),
+            lastChanged: null,
+            compute() {
+                const salary = toNumber(this.salary);
+                const budget = toNumber(this.budget);
+                const savings = toNumber(this.savings);
+                if (this.lastChanged === 'salary' && salary !== null) {
+                    if (budget !== null) {
+                        this.savings = salary - budget;
+                    } else if (savings !== null) {
+                        this.budget = salary - savings;
+                    }
+                }
+                if (this.lastChanged === 'budget' && budget !== null) {
+                    if (salary !== null) {
+                        this.savings = salary - budget;
+                    } else if (savings !== null) {
+                        this.salary = budget + savings;
+                    }
+                }
+                if (this.lastChanged === 'savings' && savings !== null) {
+                    if (salary !== null) {
+                        this.budget = salary - savings;
+                    } else if (budget !== null) {
+                        this.salary = budget + savings;
+                    }
+                }
+            }
+        };
+    }
+</script>
 {% endblock %}

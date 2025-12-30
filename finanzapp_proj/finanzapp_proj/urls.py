@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from finanzapp.views import index, login_1, register, logout_view, list_transactions, edit_trans, actualizar_trans, delete_trans, organize_fin, delete_cat, edit_cat, actualizar_cat, add_transaction_email, transfer_debt
+from finanzapp.views import index, login_1, register, logout_view, list_transactions, edit_trans, actualizar_trans, delete_trans, organize_fin, delete_cat, edit_cat, actualizar_cat, add_transaction_email, transfer_debt, gmail_connect, gmail_callback, gmail_sync, suggest_category, add_savings_withdrawal
 
 urlpatterns = [
     path('', index, name='index'),
@@ -34,4 +34,9 @@ urlpatterns = [
     path('actualizarCat/<int:id_categoria>', actualizar_cat, name='actualizar_cat'),
     path('addFromEmail/', add_transaction_email, name="add_transaction_email"),
     path('transferDebt/<int:id_categoria>', transfer_debt, name='transfer_debt',),
+    path('gmail/connect/', gmail_connect, name='gmail_connect'),
+    path('gmail/callback/', gmail_callback, name='gmail_callback'),
+    path('gmail/sync/', gmail_sync, name='gmail_sync'),
+    path('suggestCategory/', suggest_category, name='suggest_category'),
+    path('savings/withdraw/', add_savings_withdrawal, name='add_savings_withdrawal'),
 ]

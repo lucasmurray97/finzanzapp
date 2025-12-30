@@ -1,106 +1,87 @@
 {% extends 'base.html' %}
 {% load humanize %}
 {% block content %}
-
-<section class="container py-5 rounded">
-    <div class="row">
-
-        <!-- Filtros -->
-
-        <div class="col-lg-3">
-            <div class="container-fluid py-5 rounded" style="background-color: #b2b7db;">
-                <h1 class="h2 pb-4">Filtros</h1>
-                <ul class="list-unstyled templatemo-accordion">
-                    <li class="pb-3">
-                        <a class="collapsed d-flex justify-content-between h3 text-decoration-none" href="#">
-                            Fecha
-                            <i class="fa fa-fw fa-chevron-circle-down mt-1"></i>
-                        </a>
-                        <ul class="collapse show list-unstyled pl-3">
-                            <li>
-                                <form method="GET" action="{% url 'list' %}">
-                                    <table>
-                                        <tr>
-                                            <td style="padding-right: 15px;"><label for="start_date">Desde:</label></td>
-                                            <td style="padding-right: 15px;"><input type="date" id="start_date" name="start_date"></td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding-right: 15px;"><label for="end_date">Hasta:</label></td>
-                                            <td style="padding-right: 15px;"><input type="date" id="end_date" name="end_date"></td>
-                                        </tr>
-                                    </table>
-                                    <input type="submit" value="Filtrar">
-                                </form>
-                            </li>
-                        </ul>
-                    </li>
-                    <li class="pb-3">
-                        <a class="collapsed d-flex justify-content-between h3 text-decoration-none" href="#">
-                            Categoría
-                            <i class="fa fa-fw fa-chevron-circle-down mt-1"></i>
-                        </a>
-                        <ul class="collapse show list-unstyled pl-3">
-                            <li>
-                                <form action="{% url 'list' %}" method="GET">
-                                    <label>Filtrar por categoria:</label><br>
-                                        {% for category in categories %}
-                                        <label>
-                                            <input type="checkbox" name="categories" value="{{ category.id }}"> {{ category.name }}
-                                        </label><br>
-                                        {% endfor %}
-                                    <input type="submit" value="Filtrar">
-                                </form>
-                            </li>
-                        </ul>
-                    </li>
-                </ul>
+<div class="app-shell">
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Transacciones</span>
+                <h2>Historial de gastos</h2>
+                <p class="text-muted">Filtra por fechas o categorías para ir al detalle.</p>
             </div>
         </div>
-        
-        <!-- Tablas -->
-
-        <div class="col-lg-9">
-            {% for category in transactions %}
-                {% if category.trans %}
-                    <div class="container-fluid bg-light py-1 rounded">
-                        {% if category.name == "ninguna"  %}
-                            <h3>Ninguna</h3>
-                        {% else %}
-                            <h3>{{ category.name }}</h3>
-                        {% endif %}
+        <div class="split-grid">
+            <div class="panel-side">
+                <div class="hint-card">
+                    <h4>Filtrar por fecha</h4>
+                    <form method="get" class="stack">
+                        <label for="start_date" class="form-label">Desde</label>
+                        <input type="date" id="start_date" name="start_date">
+                        <label for="end_date" class="form-label">Hasta</label>
+                        <input type="date" id="end_date" name="end_date">
+                        <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Aplicar</button>
+                    </form>
+                </div>
+                <div class="hint-card">
+                    <h4>Filtrar por categoría</h4>
+                    <form method="get" class="stack">
+                        {% for category in categories %}
+                            <label class="inline-check">
+                                <input type="checkbox" name="categories" value="{{ category.id }}">
+                                {% if category.name == "ninguna" %}Sin categoría{% else %}{{ category.name }}{% endif %}
+                            </label>
+                        {% endfor %}
+                        <button type="submit" class="btn btn-outline-dark btn-lg px-3">Filtrar</button>
+                    </form>
+                </div>
+            </div>
+            <div class="panel-body transactions-scroll">
+                {% for category in transactions %}
+                    <div class="list-card">
+                        <div class="section-header">
+                            <h3>{% if category.name == "ninguna" %}Sin categoría{% else %}{{ category.name }}{% endif %}</h3>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Valor</th>
+                                        <th>Descripción</th>
+                                        <th>Fecha</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for transaction in category.trans %}
+                                        <tr>
+                                            <td>{{ transaction.amount|floatformat:0|intcomma }}</td>
+                                            <td><div class="desc-box">{{ transaction.description }}</div></td>
+                                            <td>{{ transaction.date|date:"d/m/Y" }}</td>
+                                            <td class="action-cell">
+                                                <div class="action-stack">
+                                                    <a class="btn btn-warning" href="/editTrans/{{ transaction.id }}" aria-label="Editar" title="Editar">
+                                                        <i class="fa fa-pen fa-fw" aria-hidden="true"></i>
+                                                        <span class="visually-hidden">Editar</span>
+                                                    </a>
+                                                    <a class="btn btn-danger" href="/eliminarTrans/{{ transaction.id }}" aria-label="Eliminar" title="Eliminar">
+                                                        <i class="fa fa-times fa-fw" aria-hidden="true"></i>
+                                                        <span class="visually-hidden">Eliminar</span>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% empty %}
+                                        <tr>
+                                            <td colspan="4" class="text-muted">Sin movimientos en esta categoría.</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <br>
-                    <table style="width:80%; border-collapse: collapse;">
-                        <thead>
-                            <tr>
-                                <th scope="col" style="border-bottom: 1px solid black; ">Valor</th>
-                                <th scope="col" style="border-bottom: 1px solid black; ">Descripción</th>
-                                <th scope="col" style="border-bottom: 1px solid black; ">Fecha</th>
-                                <th scope="col" style="border-bottom: 1px solid black; "></th>
-                                <th scope="col" style="border-bottom: 1px solid black; "></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for transaction in category.trans %}
-                                <tr>
-                                    {% if transaction.type == "spend" %}
-                                    <td>-{{transaction.amount|floatformat:0|intcomma}}</td>
-                                    {% else %}
-                                    <td>+{{transaction.amount|floatformat:0|intcomma}}</td>
-                                    {% endif %}
-                                    <td>{{transaction.description}}</td>
-                                    <td>{{ transaction.date|date:"d/m/Y" }}</td>
-                                    <td><a class="btn btn-warning" href="/editTrans/{{ transaction.id }}"> Editar </a></td>
-                                    <td><a class="btn btn-danger" href="/eliminarTrans/{{ transaction.id }}"> Eliminar </a></td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                    <br><hr><br>
-                {% endif %}
-            {% endfor %}
+                {% endfor %}
+            </div>
         </div>
-        
-    </div>
-</section>   
+    </section>
+</div>
 {% endblock %}

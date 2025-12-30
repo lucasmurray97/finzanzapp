@@ -1,47 +1,30 @@
 {% extends 'base.html' %}
 {% load humanize %}
 {% block content %}
-<div style="margin-top: 20px;"></div> 
-<div class="container py-5">
-      <div class="row py-5">
-        <div class="col-md-9 m-auto">
-
-      <h2>Transfiere un monto desde {{ cat_name }} ({{ saldo_cat.amount|floatformat:0|intcomma }})</h2>
-
-  <form class="p-4" style="background-color: #ffffff;" action="/transferDebt/{{ category }}" method="post">
-      {% csrf_token %}
-    
-      <div class="accordion-item">
-        <h2 class="accordion-header" id="typeHeading">
-          <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#typeCollapse" aria-expanded="true" aria-controls="typeCollapse">
-            Categoría a transferir
-          </button>
-        </h2>
-        <div id="typeCollapse" class="accordion-collapse collapse show" aria-labelledby="typeHeading" data-bs-parent="#accordionForm">
-          <div class="accordion-body">
-            <div class="form-group">
-              {% for category in categories.values %}
-              <div class="col-md-6">
-                <div class="form-group">
-                  <label for="{{ category.cat.id }}">{{ category.cat.name }} ({{category.saldo|floatformat:0|intcomma }}):</label>
-                  <input type="number" class="form-control" id="{{ category.cat.id }}" name="amount" value="">
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
+<div class="app-shell">
+  <section class="panel">
+    <div class="section-header">
+      <div>
+        <span class="eyebrow">Transferencias</span>
+        <h2>Mover saldo entre categorías</h2>
+        <p class="text-muted">Desde {{ cat_name }} ({{ saldo_cat.amount|floatformat:0|intcomma }})</p>
       </div>
-      <div style="margin-top: 20px;"></div> 
-      
-   
-      
-      <button type="submit" class="btn btn-success btn-lg px-3 text-light">Actualizar</button>
-      <a href="/"><button type="button" class="btn btn-danger btn-lg px-3 text-light">Cancelar</button></a>
-      
+    </div>
+    <form class="panel-form" action="/transferDebt/{{ category }}" method="post">
+      {% csrf_token %}
+      <div class="field-grid">
+        {% for category in categories.values %}
+        <div class="form-group">
+          <label for="{{ category.cat.id }}">{{ category.cat.name }} ({{ category.saldo|floatformat:0|intcomma }})</label>
+          <input type="number" class="form-control" id="{{ category.cat.id }}" name="amount" value="">
+        </div>
+        {% endfor %}
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-success btn-lg px-3 text-light">Actualizar</button>
+        <a href="/" class="btn btn-outline-dark btn-lg px-3">Cancelar</a>
+      </div>
+    </form>
+  </section>
 </div>
-</div>
-</div>
-</form>
-    <div style="margin-top: 200px;"></div> 
 {% endblock %}
