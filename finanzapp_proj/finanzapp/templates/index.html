@@ -253,15 +253,30 @@
                 this.status = 'Sincronizando...';
                 this.syncing = true;
                 try {
-                    const response = await fetch(`/gmail/sync/?month=${month}`);
-                    const data = await response.json();
-                    if (!response.ok) {
-                        this.status = data.message || 'No se pudo sincronizar Gmail.';
-                        return;
-                    }
-                    this.status = `Importadas ${data.created} compras nuevas (revisadas ${data.total || 0}).`;
-                    if (data.created > 0 && Array.isArray(data.transactions) && data.transactions.length) {
-                        showSyncModal(data.transactions);
+                    let pageToken = null;
+                    let createdTotal = 0;
+                    let reviewedTotal = 0;
+                    let batches = 0;
+                    do {
+                        const url = new URL('/gmail/sync/', window.location.origin);
+                        url.searchParams.set('month', month);
+                        if (pageToken) {
+                            url.searchParams.set('page_token', pageToken);
+                        }
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        if (!response.ok) {
+                            this.status = data.message || 'No se pudo sincronizar Gmail.';
+                            return;
+                        }
+                        createdTotal += data.created || 0;
+                        reviewedTotal += data.total || 0;
+                        pageToken = data.next_page_token || null;
+                        batches += 1;
+                        this.status = `Importadas ${createdTotal} compras (revisadas ${reviewedTotal}).`;
+                    } while (pageToken && batches < 25);
+                    if (pageToken) {
+                        this.status = `Importadas ${createdTotal} compras (revisadas ${reviewedTotal}). Continúa para terminar.`;
                     }
                 } catch (err) {
                     this.status = 'No se pudo sincronizar Gmail.';
@@ -273,15 +288,31 @@
                 this.status = 'Resincronizando mes...';
                 this.syncing = true;
                 try {
-                    const response = await fetch(`/gmail/sync/?month=${month}&resync=1`);
-                    const data = await response.json();
-                    if (!response.ok) {
-                        this.status = data.message || 'No se pudo resincronizar Gmail.';
-                        return;
-                    }
-                    this.status = `Resincronizadas ${data.created} compras (revisadas ${data.total || 0}).`;
-                    if (data.created > 0 && Array.isArray(data.transactions) && data.transactions.length) {
-                        showSyncModal(data.transactions);
+                    let pageToken = null;
+                    let createdTotal = 0;
+                    let reviewedTotal = 0;
+                    let batches = 0;
+                    do {
+                        const url = new URL('/gmail/sync/', window.location.origin);
+                        url.searchParams.set('month', month);
+                        url.searchParams.set('resync', batches === 0 ? '1' : '0');
+                        if (pageToken) {
+                            url.searchParams.set('page_token', pageToken);
+                        }
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        if (!response.ok) {
+                            this.status = data.message || 'No se pudo resincronizar Gmail.';
+                            return;
+                        }
+                        createdTotal += data.created || 0;
+                        reviewedTotal += data.total || 0;
+                        pageToken = data.next_page_token || null;
+                        batches += 1;
+                        this.status = `Resincronizadas ${createdTotal} compras (revisadas ${reviewedTotal}).`;
+                    } while (pageToken && batches < 25);
+                    if (pageToken) {
+                        this.status = `Resincronizadas ${createdTotal} compras (revisadas ${reviewedTotal}). Continúa para terminar.`;
                     }
                 } catch (err) {
                     this.status = 'No se pudo resincronizar Gmail.';

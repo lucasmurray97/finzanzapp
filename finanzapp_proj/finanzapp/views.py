@@ -293,11 +293,11 @@ def _get_gmail_service(user):
             return None
     return build("gmail", "v1", credentials=creds)
 
-def _sync_gmail_month(user, month_date):
+def _sync_gmail_month(user, month_date, page_token=None):
     service = _get_gmail_service(user)
     if not service:
         logger.warning("Gmail sync: no service for user=%s", user.id)
-        return {"created": 0, "total": 0, "parsed": 0, "transactions": []}
+        return {"created": 0, "total": 0, "parsed": 0, "transactions": [], "next_page_token": None}
     start, end = _month_range(month_date)
     query = (
         '(subject:"Compra con Tarjeta de Crédito" OR subject:"Cargo en Cuenta") '
@@ -308,86 +308,29 @@ def _sync_gmail_month(user, month_date):
     total = 0
     parsed_count = 0
     created_transactions = []
-    page_token = None
     try:
-        while True:
-            response = service.users().messages().list(userId="me", q=query, pageToken=page_token).execute()
-            logger.info("Gmail sync batch user=%s messages=%s", user.id, len(response.get("messages", [])))
-            messages = response.get("messages", [])
-            for msg in messages:
-                total += 1
-                gmail_id = msg.get("id")
-                existing_message = GmailMessage.objects.filter(user=user, gmail_id=gmail_id).first()
-                if existing_message:
-                    if existing_message.purchase_date is None:
-                        continue
-                    raw_description = (
-                        existing_message.snippet
-                        or existing_message.subject
-                        or existing_message.merchant
-                        or "Compra con tarjeta"
-                    )
-                    description = _extract_relevant_text(raw_description) or raw_description
-                    merchant = (existing_message.merchant or "").strip()
-                    if not _transaction_exists(
-                        user=user,
-                        amount=existing_message.amount,
-                        date=existing_message.purchase_date,
-                        description=description,
-                        merchant=merchant,
-                    ):
-                        category = _categorize_description(user, description)
-                        transaction = Transaction.objects.create(
-                            user=user,
-                            description=description,
-                            amount=existing_message.amount,
-                            date=existing_message.purchase_date,
-                            category=category,
-                        )
-                        created += 1
-                        created_transactions.append(
-                            {
-                                "id": transaction.id,
-                                "description": transaction.description,
-                                "category": category.name if category else "ninguna",
-                                "amount": transaction.amount,
-                            }
-                        )
+        response = service.users().messages().list(userId="me", q=query, pageToken=page_token).execute()
+        logger.info("Gmail sync batch user=%s messages=%s", user.id, len(response.get("messages", [])))
+        messages = response.get("messages", [])
+        for msg in messages:
+            total += 1
+            gmail_id = msg.get("id")
+            existing_message = GmailMessage.objects.filter(user=user, gmail_id=gmail_id).first()
+            if existing_message:
+                if existing_message.purchase_date is None:
                     continue
-                full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
-                payload = full.get("payload", {})
-                headers = payload.get("headers", [])
-                subject = _get_header(headers, "Subject")
-                snippet = full.get("snippet", "")
-                body_text = _decode_gmail_body(payload)
-                parsed = _parse_purchase_email(body_text or snippet)
-                if not parsed:
-                    logger.info("Gmail sync: no parse match user=%s subject=%s snippet=%s", user.id, subject, snippet)
-                    continue
-                parsed_count += 1
-                try:
-                    GmailMessage.objects.get_or_create(
-                        user=user,
-                        gmail_id=gmail_id,
-                        defaults={
-                            "subject": subject,
-                            "snippet": snippet,
-                            "amount": parsed["amount"],
-                            "merchant": parsed["merchant"],
-                            "account": parsed["account"],
-                            "purchase_date": parsed["purchase_date"],
-                            "purchase_time": parsed["purchase_time"],
-                        },
-                    )
-                except IntegrityError:
-                    logger.info("Gmail sync: duplicate gmail_id user=%s id=%s", user.id, gmail_id)
-                    continue
-                description = parsed.get("description") or parsed["merchant"] or subject or "Compra con tarjeta"
-                merchant = (parsed.get("merchant") or "").strip()
+                raw_description = (
+                    existing_message.snippet
+                    or existing_message.subject
+                    or existing_message.merchant
+                    or "Compra con tarjeta"
+                )
+                description = _extract_relevant_text(raw_description) or raw_description
+                merchant = (existing_message.merchant or "").strip()
                 if not _transaction_exists(
                     user=user,
-                    amount=parsed["amount"],
-                    date=parsed["purchase_date"],
+                    amount=existing_message.amount,
+                    date=existing_message.purchase_date,
                     description=description,
                     merchant=merchant,
                 ):
@@ -395,8 +338,8 @@ def _sync_gmail_month(user, month_date):
                     transaction = Transaction.objects.create(
                         user=user,
                         description=description,
-                        amount=parsed["amount"],
-                        date=parsed["purchase_date"],
+                        amount=existing_message.amount,
+                        date=existing_message.purchase_date,
                         category=category,
                     )
                     created += 1
@@ -408,14 +351,80 @@ def _sync_gmail_month(user, month_date):
                             "amount": transaction.amount,
                         }
                     )
-            page_token = response.get("nextPageToken")
-            if not page_token:
-                break
-        GmailCredential.objects.filter(user=user).update(last_synced_at=timezone.now())
+                continue
+            full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
+            payload = full.get("payload", {})
+            headers = payload.get("headers", [])
+            subject = _get_header(headers, "Subject")
+            snippet = full.get("snippet", "")
+            body_text = _decode_gmail_body(payload)
+            parsed = _parse_purchase_email(body_text or snippet)
+            if not parsed:
+                logger.info("Gmail sync: no parse match user=%s subject=%s snippet=%s", user.id, subject, snippet)
+                continue
+            parsed_count += 1
+            try:
+                GmailMessage.objects.get_or_create(
+                    user=user,
+                    gmail_id=gmail_id,
+                    defaults={
+                        "subject": subject,
+                        "snippet": snippet,
+                        "amount": parsed["amount"],
+                        "merchant": parsed["merchant"],
+                        "account": parsed["account"],
+                        "purchase_date": parsed["purchase_date"],
+                        "purchase_time": parsed["purchase_time"],
+                    },
+                )
+            except IntegrityError:
+                logger.info("Gmail sync: duplicate gmail_id user=%s id=%s", user.id, gmail_id)
+                continue
+            description = parsed.get("description") or parsed["merchant"] or subject or "Compra con tarjeta"
+            merchant = (parsed.get("merchant") or "").strip()
+            if not _transaction_exists(
+                user=user,
+                amount=parsed["amount"],
+                date=parsed["purchase_date"],
+                description=description,
+                merchant=merchant,
+            ):
+                category = _categorize_description(user, description)
+                transaction = Transaction.objects.create(
+                    user=user,
+                    description=description,
+                    amount=parsed["amount"],
+                    date=parsed["purchase_date"],
+                    category=category,
+                )
+                created += 1
+                created_transactions.append(
+                    {
+                        "id": transaction.id,
+                        "description": transaction.description,
+                        "category": category.name if category else "ninguna",
+                        "amount": transaction.amount,
+                    }
+                )
+        next_page_token = response.get("nextPageToken")
+        if not next_page_token:
+            GmailCredential.objects.filter(user=user).update(last_synced_at=timezone.now())
     except Exception:
         logger.exception("Gmail sync failed for user=%s", user.id)
-        return {"created": created, "total": total, "parsed": parsed_count, "transactions": created_transactions}
-    return {"created": created, "total": total, "parsed": parsed_count, "transactions": created_transactions}
+        return {
+            "created": created,
+            "total": total,
+            "parsed": parsed_count,
+            "transactions": created_transactions,
+            "next_page_token": None,
+        }
+    return {
+        "created": created,
+        "total": total,
+        "parsed": parsed_count,
+        "transactions": created_transactions,
+        "next_page_token": next_page_token,
+    }
 
 def index(request):
     # Cuando se carga la página
@@ -939,6 +948,7 @@ def gmail_sync(request):
         return JsonResponse({'status': 'error', 'message': 'Gmail no conectado.'}, status=400)
     month = request.GET.get("month")
     resync = request.GET.get("resync") == "1"
+    page_token = request.GET.get("page_token")
     if month:
         try:
             month_date = datetime.datetime.strptime(month, "%Y-%m").date()
@@ -946,7 +956,7 @@ def gmail_sync(request):
             month_date = timezone.now().date()
     else:
         month_date = timezone.now().date()
-    if resync:
+    if resync and not page_token:
         month_start, month_end = _month_range(_month_start(month_date))
         Transaction.objects.filter(
             user=request.user,
@@ -958,7 +968,7 @@ def gmail_sync(request):
             purchase_date__gte=month_start,
             purchase_date__lt=month_end,
         ).delete()
-    result = _sync_gmail_month(request.user, _month_start(month_date))
+    result = _sync_gmail_month(request.user, _month_start(month_date), page_token=page_token)
     return JsonResponse({'status': 'success', **result})
 
 @csrf_exempt
