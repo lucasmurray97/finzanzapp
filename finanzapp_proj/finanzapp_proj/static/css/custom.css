@@ -312,6 +312,21 @@ h5 {
   font-size: 0.85rem;
 }
 
+@media (max-width: 768px) {
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  .table {
+    min-width: 520px;
+  }
+
+  .action-stack {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 .table {
   margin: 0;
   color: var(--text);
