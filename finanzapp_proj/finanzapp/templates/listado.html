@@ -9,12 +9,17 @@
                 <h2>Historial de gastos</h2>
                 <p class="text-muted">Filtra por fechas o categorías para ir al detalle.</p>
             </div>
+            <div class="order-toggle">
+                <a class="btn btn-outline-dark btn-sm" href="?{{ toggle_query }}" aria-label="Cambiar orden">
+                    {% if order == "asc" %}&#8595;{% else %}&#8593;{% endif %}
+                </a>
+            </div>
         </div>
         <div class="split-grid">
             <div class="panel-side">
-                <div class="hint-card">
+                <div class="hint-card date-filter-card">
                     <h4>Filtrar por fecha</h4>
-                    <form method="get" class="stack">
+                    <form method="get" class="stack transactions-date-filter">
                         <label for="start_date" class="form-label">Desde</label>
                         <input type="date" id="start_date" name="start_date">
                         <label for="end_date" class="form-label">Hasta</label>
@@ -55,7 +60,15 @@
                                     {% for transaction in category.trans %}
                                         <tr>
                                             <td>{{ transaction.amount|floatformat:0|intcomma }}</td>
-                                            <td><div class="desc-box">{{ transaction.description }}</div></td>
+                                            <td class="text-center">
+                                                <button type="button" class="btn btn-outline-dark btn-sm desc-button">
+                                                    <i class="fa fa-plus fa-fw" aria-hidden="true"></i>
+                                                    <span class="visually-hidden">Ver descripción</span>
+                                                </button>
+                                                <div class="desc-inline" hidden>
+                                                    {{ transaction.description }}
+                                                </div>
+                                            </td>
                                             <td>{{ transaction.date|date:"d/m/Y" }}</td>
                                             <td class="action-cell">
                                                 <div class="action-stack">
@@ -84,4 +97,23 @@
         </div>
     </section>
 </div>
+
+<script>
+    (function () {
+        var buttons = document.querySelectorAll(".desc-button");
+        buttons.forEach(function (button) {
+            button.addEventListener("click", function () {
+                var wrapper = button.closest("td");
+                if (!wrapper) {
+                    return;
+                }
+                var desc = wrapper.querySelector(".desc-inline");
+                if (!desc) {
+                    return;
+                }
+                desc.hidden = !desc.hidden;
+            });
+        });
+    })();
+</script>
 {% endblock %}

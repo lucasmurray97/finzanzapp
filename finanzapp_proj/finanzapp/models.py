@@ -43,6 +43,8 @@ class MonthlyBudget(models.Model):
     month = models.DateField()
     salary = models.FloatField(default=0)
     budget = models.FloatField(default=0)
+    debts = models.FloatField(default=0)
+    savings_goal = models.FloatField(default=0)
 
     class Meta:
         unique_together = ("user", "month")

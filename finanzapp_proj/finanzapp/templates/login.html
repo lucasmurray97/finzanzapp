@@ -23,6 +23,7 @@
             </div>
             <div class="form-actions">
                 <input type="submit" value="Iniciar sesión" class="btn bg-dark btn-lg px-3 text-light">
+                <a href="{% url 'register_user' %}" class="btn btn-outline-dark btn-lg px-3">Crear cuenta</a>
             </div>
         </form>
         {% if error_message %}

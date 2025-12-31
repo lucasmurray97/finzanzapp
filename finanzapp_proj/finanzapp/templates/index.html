@@ -99,7 +99,7 @@
                     <h4>Consejos rápidos</h4>
                     <ul>
                         <li>Usa descripciones claras para mejorar la categorización.</li>
-                        <li>Si conectas Gmail, el sistema importa compras automáticamente.</li>
+                        <li>Si conectas Gmail, importa compras cuando sincronizas.</li>
                         <li>Revisa tus categorías para ajustar tu presupuesto mensual.</li>
                     </ul>
                 </div>
@@ -260,16 +260,15 @@
                         return;
                     }
                     this.status = `Importadas ${data.created} compras nuevas (revisadas ${data.total || 0}).`;
-                    if (data.created > 0) {
-                        setTimeout(() => window.location.reload(), 600);
+                    if (data.created > 0 && Array.isArray(data.transactions) && data.transactions.length) {
+                        showSyncModal(data.transactions);
                     }
                 } catch (err) {
                     this.status = 'No se pudo sincronizar Gmail.';
                 } finally {
                     this.syncing = false;
                 }
-            }
-            ,
+            },
             async resync() {
                 this.status = 'Resincronizando mes...';
                 this.syncing = true;
@@ -281,8 +280,8 @@
                         return;
                     }
                     this.status = `Resincronizadas ${data.created} compras (revisadas ${data.total || 0}).`;
-                    if (data.created > 0) {
-                        setTimeout(() => window.location.reload(), 600);
+                    if (data.created > 0 && Array.isArray(data.transactions) && data.transactions.length) {
+                        showSyncModal(data.transactions);
                     }
                 } catch (err) {
                     this.status = 'No se pudo resincronizar Gmail.';
@@ -293,35 +292,9 @@
         };
     }
 
-    const gmailSyncButton = document.getElementById('gmail-sync');
-    if (gmailSyncButton) {
-        gmailSyncButton.addEventListener('click', async () => {
-            const statusEl = document.querySelector('[x-data^="gmailSync"] .text-muted');
-            const month = gmailSyncButton.dataset.month || '';
-            if (statusEl) {
-                statusEl.textContent = 'Sincronizando...';
-            }
-            try {
-                const response = await fetch(`/gmail/sync/?month=${month}`);
-                const data = await response.json();
-                if (!response.ok) {
-                    if (statusEl) {
-                        statusEl.textContent = data.message || 'No se pudo sincronizar Gmail.';
-                    }
-                    return;
-                }
-                if (statusEl) {
-                    statusEl.textContent = `Importadas ${data.created} compras nuevas (revisadas ${data.total || 0}).`;
-                }
-                if (data.created > 0) {
-                    setTimeout(() => window.location.reload(), 600);
-                }
-            } catch (err) {
-                if (statusEl) {
-                    statusEl.textContent = 'No se pudo sincronizar Gmail.';
-                }
-            }
-        });
+    function showSyncModal() {
+        return;
     }
+
 </script>
 {% endblock %}

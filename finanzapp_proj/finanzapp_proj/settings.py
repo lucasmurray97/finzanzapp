@@ -28,12 +28,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-n1r4pp$)a_2dvjlugb53y@f64opws54cg(+jn059a7r=d6j&zq'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-n1r4pp$)a_2dvjlugb53y@f64opws54cg(+jn059a7r=d6j&zq')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'true').lower() in ('1', 'true', 'yes')
 
-ALLOWED_HOSTS = ['finzanzapp.onrender.com', '127.0.0.1', 'localhost']
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(',') if host.strip()]
+else:
+    ALLOWED_HOSTS = ['finzanzapp.onrender.com', '127.0.0.1', 'localhost']
+
+csrf_origins_env = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+if csrf_origins_env:
+    CSRF_TRUSTED_ORIGINS = [
+        origin.strip() for origin in csrf_origins_env.split(',') if origin.strip()
+    ]
 
 
 # Application definition
@@ -85,11 +95,11 @@ WSGI_APPLICATION = 'finanzapp_proj.wsgi.application'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 DATABASES = {
-    'default': dj_database_url.config(        
-        # Replace this value with your local database's connection string.        
-        default=os.environ["DATABASE_URL"],        
-        conn_max_age=600    
-        )
+    'default': dj_database_url.config(
+        # Replace this value with your local database's connection string.
+        default=os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
+        conn_max_age=600,
+    )
 }
 
 

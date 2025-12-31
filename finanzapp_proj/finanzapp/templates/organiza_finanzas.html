@@ -133,6 +133,24 @@
             </div>
         </form>
     </section>
+
+    <section class="panel">
+        <div class="section-header">
+            <div>
+                <span class="eyebrow">Gmail</span>
+                <h2>Conecta tu correo</h2>
+                <p class="text-muted">Autoriza el acceso para importar compras automáticamente.</p>
+            </div>
+        </div>
+        <div class="panel-form">
+            {% if gmail_connected %}
+                <p class="text-muted">Gmail conectado.</p>
+                <a href="{% url 'gmail_connect' %}" class="btn btn-outline-dark btn-lg px-3">Reconectar Gmail</a>
+            {% else %}
+                <a href="{% url 'gmail_connect' %}" class="btn bg-dark btn-lg px-3 text-light">Conectar Gmail</a>
+            {% endif %}
+        </div>
+    </section>
 </div>
 
 <script>

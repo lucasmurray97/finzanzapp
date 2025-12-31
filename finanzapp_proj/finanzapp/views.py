@@ -224,6 +224,10 @@ def _categorize_description(user, description):
     if not categories:
         return Category.objects.filter(user=user, name="ninguna").first()
     description_lower = description.lower()
+    if "uber eats" in description_lower or "ubereats" in description_lower:
+        for category in categories:
+            if category.name.strip().lower() == "comida":
+                return category
     for category in categories:
         if category.name.lower() in description_lower:
             return category
@@ -253,6 +257,21 @@ def _categorize_description(user, description):
             return Category.objects.filter(user=user, name="ninguna").first()
     return Category.objects.filter(user=user, name="ninguna").first()
 
+def _transaction_exists(user, amount, date, description, merchant=""):
+    if merchant:
+        return Transaction.objects.filter(
+            user=user,
+            amount=amount,
+            date=date,
+            description__icontains=merchant,
+        ).exists()
+    return Transaction.objects.filter(
+        user=user,
+        amount=amount,
+        date=date,
+        description__iexact=description,
+    ).exists()
+
 def _get_gmail_service(user):
     credential = GmailCredential.objects.filter(user=user).first()
     if not credential:
@@ -278,7 +297,7 @@ def _sync_gmail_month(user, month_date):
     service = _get_gmail_service(user)
     if not service:
         logger.warning("Gmail sync: no service for user=%s", user.id)
-        return {"created": 0, "total": 0, "parsed": 0}
+        return {"created": 0, "total": 0, "parsed": 0, "transactions": []}
     start, end = _month_range(month_date)
     query = (
         '(subject:"Compra con Tarjeta de Crédito" OR subject:"Cargo en Cuenta") '
@@ -288,6 +307,7 @@ def _sync_gmail_month(user, month_date):
     created = 0
     total = 0
     parsed_count = 0
+    created_transactions = []
     page_token = None
     try:
         while True:
@@ -297,7 +317,42 @@ def _sync_gmail_month(user, month_date):
             for msg in messages:
                 total += 1
                 gmail_id = msg.get("id")
-                if GmailMessage.objects.filter(user=user, gmail_id=gmail_id).exists():
+                existing_message = GmailMessage.objects.filter(user=user, gmail_id=gmail_id).first()
+                if existing_message:
+                    if existing_message.purchase_date is None:
+                        continue
+                    raw_description = (
+                        existing_message.snippet
+                        or existing_message.subject
+                        or existing_message.merchant
+                        or "Compra con tarjeta"
+                    )
+                    description = _extract_relevant_text(raw_description) or raw_description
+                    merchant = (existing_message.merchant or "").strip()
+                    if not _transaction_exists(
+                        user=user,
+                        amount=existing_message.amount,
+                        date=existing_message.purchase_date,
+                        description=description,
+                        merchant=merchant,
+                    ):
+                        category = _categorize_description(user, description)
+                        transaction = Transaction.objects.create(
+                            user=user,
+                            description=description,
+                            amount=existing_message.amount,
+                            date=existing_message.purchase_date,
+                            category=category,
+                        )
+                        created += 1
+                        created_transactions.append(
+                            {
+                                "id": transaction.id,
+                                "description": transaction.description,
+                                "category": category.name if category else "ninguna",
+                                "amount": transaction.amount,
+                            }
+                        )
                     continue
                 full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
                 payload = full.get("payload", {})
@@ -327,23 +382,40 @@ def _sync_gmail_month(user, month_date):
                 except IntegrityError:
                     logger.info("Gmail sync: duplicate gmail_id user=%s id=%s", user.id, gmail_id)
                     continue
-                category = _categorize_description(user, parsed["merchant"] or subject or "Compra")
-                Transaction.objects.create(
+                description = parsed.get("description") or parsed["merchant"] or subject or "Compra con tarjeta"
+                merchant = (parsed.get("merchant") or "").strip()
+                if not _transaction_exists(
                     user=user,
-                    description=parsed.get("description") or parsed["merchant"] or subject or "Compra con tarjeta",
                     amount=parsed["amount"],
                     date=parsed["purchase_date"],
-                    category=category,
-                )
-                created += 1
+                    description=description,
+                    merchant=merchant,
+                ):
+                    category = _categorize_description(user, description)
+                    transaction = Transaction.objects.create(
+                        user=user,
+                        description=description,
+                        amount=parsed["amount"],
+                        date=parsed["purchase_date"],
+                        category=category,
+                    )
+                    created += 1
+                    created_transactions.append(
+                        {
+                            "id": transaction.id,
+                            "description": transaction.description,
+                            "category": category.name if category else "ninguna",
+                            "amount": transaction.amount,
+                        }
+                    )
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
         GmailCredential.objects.filter(user=user).update(last_synced_at=timezone.now())
     except Exception:
         logger.exception("Gmail sync failed for user=%s", user.id)
-        return {"created": created, "total": total, "parsed": parsed_count}
-    return {"created": created, "total": total, "parsed": parsed_count}
+        return {"created": created, "total": total, "parsed": parsed_count, "transactions": created_transactions}
+    return {"created": created, "total": total, "parsed": parsed_count, "transactions": created_transactions}
 
 def index(request):
     # Cuando se carga la página
@@ -383,15 +455,14 @@ def index(request):
             month_budget = MonthlyBudget.objects.filter(user=request.user, month=month_start).first()
             if not month_budget:
                 month_budget = MonthlyBudget(user=request.user, month=month_start, salary=0, budget=0)
-            spends_sum = Transaction.objects.filter(user=request.user, date__range=[month_start, month_end]).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+            spends_sum = Transaction.objects.filter(
+                user=request.user,
+                date__gte=month_start,
+                date__lt=month_end,
+            ).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
             effective_spend = max(month_budget.budget, spends_sum)
             month_savings = month_budget.salary - effective_spend
             gmail_connected = GmailCredential.objects.filter(user=request.user).exists()
-            if gmail_connected:
-                credential = GmailCredential.objects.filter(user=request.user).first()
-                last_synced = credential.last_synced_at
-                if not last_synced or (timezone.now() - last_synced).total_seconds() > 900:
-                    _sync_gmail_month(request.user, month_start)
             chart_labels = []
             chart_values = []
             chart_cumulative = []
@@ -402,7 +473,11 @@ def index(request):
                 budget_row = MonthlyBudget.objects.filter(user=request.user, month=start).first()
                 if not budget_row:
                     budget_row = MonthlyBudget(user=request.user, month=start, salary=0, budget=0)
-                spends = Transaction.objects.filter(user=request.user, date__range=[start, end]).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
+                spends = Transaction.objects.filter(
+                    user=request.user,
+                    date__gte=start,
+                    date__lt=end,
+                ).exclude(description="Transferencia interna").aggregate(Sum('amount'))['amount__sum'] or 0
                 effective_spend = max(budget_row.budget, spends)
                 month_value = budget_row.salary - effective_spend
                 chart_labels.append(_month_label(start))
@@ -464,20 +539,35 @@ def index(request):
 def list_transactions(request):
     if request.user.is_authenticated:
         # Obtener categorías del usuario
-        cats = Category.objects.filter(user=request.user)
+        categories = Category.objects.filter(user=request.user)
         selected_cats = request.GET.getlist('categories')
         transactions = []
 
         # Obtener parámetros de fecha seleccionados
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
+        if not start_date and not end_date:
+            month_start, month_end = _month_range(timezone.now().date())
+            start_date = month_start
+            end_date = month_end
+        cats = categories
         if selected_cats:
-            cats = cats.filter(id__in=selected_cats)
+            cats = categories.filter(id__in=selected_cats)
+
+        order = request.GET.get("order", "desc")
+        next_order = "asc" if order == "desc" else "desc"
+        toggle_params = request.GET.copy()
+        toggle_params["order"] = next_order
+        toggle_query = toggle_params.urlencode()
 
         for cat in cats:
             trans = Transaction.objects.filter(category=cat)
             if start_date and end_date:
                 trans = trans.filter(date__range=[start_date, end_date])
+            if order == "asc":
+                trans = trans.order_by("date", "id")
+            else:
+                trans = trans.order_by("-date", "-id")
             transactions.append({'name': cat.name, 'trans': trans})
                 
         #debe tener budgets para mostrar el estado
@@ -485,7 +575,17 @@ def list_transactions(request):
         for cat in cats:
             budgets.append(saldo_categoría(request.user, cat))  
         # Pasar las transacciones y categorías a la plantilla
-        return render(request, "listado.html", {"transactions": transactions, "categories": cats, "budgets": budgets})
+        return render(
+            request,
+            "listado.html",
+            {
+                "transactions": transactions,
+                "categories": categories,
+                "budgets": budgets,
+                "order": order,
+                "toggle_query": toggle_query,
+            },
+        )
 
     else:
         # Si no está autenticado, redirigir al inicio de sesión
@@ -599,6 +699,7 @@ def organize_fin(request):
             budget_row = MonthlyBudget.objects.filter(user=request.user, month=month_start).first()
             if not budget_row:
                 budget_row = MonthlyBudget(user=request.user, month=month_start, salary=0, budget=0)
+            gmail_connected = GmailCredential.objects.filter(user=request.user).exists()
             return render(
                 request,
                 'organiza_finanzas.html',
@@ -608,6 +709,7 @@ def organize_fin(request):
                     'budget_month': month_start.strftime("%Y-%m"),
                     'use_gpt': request.user.use_gpt,
                     'openai_api_key': request.user.openai_api_key or '',
+                    'gmail_connected': gmail_connected,
                 },
             )
     # Si no está autenticado
