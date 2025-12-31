@@ -2,6 +2,7 @@ services:
   - type: web
     name: finzanzapp-9xgw
     env: python
+    pythonVersion: 3.11.9
     plan: starter
     repo: https://github.com/lucasmurray97/finzanzapp
     branch: main
