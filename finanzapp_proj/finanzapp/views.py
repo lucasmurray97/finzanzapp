@@ -293,12 +293,11 @@ def _get_gmail_service(user):
             return None
     return build("gmail", "v1", credentials=creds)
 
-def _sync_gmail_month(user, month_date, page_token=None):
+def _sync_gmail_range(user, start, end, page_token=None):
     service = _get_gmail_service(user)
     if not service:
         logger.warning("Gmail sync: no service for user=%s", user.id)
         return {"created": 0, "total": 0, "parsed": 0, "transactions": [], "next_page_token": None}
-    start, end = _month_range(month_date)
     query = (
         '(subject:"Compra con Tarjeta de Crédito" OR subject:"Cargo en Cuenta") '
         f'in:anywhere after:{start.strftime("%Y/%m/%d")} before:{end.strftime("%Y/%m/%d")}'
@@ -352,13 +351,23 @@ def _sync_gmail_month(user, month_date, page_token=None):
                         }
                     )
                 continue
-            full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
-            payload = full.get("payload", {})
+            meta = service.users().messages().get(
+                userId="me",
+                id=gmail_id,
+                format="metadata",
+                metadataHeaders=["Subject"],
+            ).execute()
+            payload = meta.get("payload", {})
             headers = payload.get("headers", [])
             subject = _get_header(headers, "Subject")
-            snippet = full.get("snippet", "")
-            body_text = _decode_gmail_body(payload)
-            parsed = _parse_purchase_email(body_text or snippet)
+            snippet = meta.get("snippet", "")
+            parsed = _parse_purchase_email(snippet)
+            body_text = ""
+            if not parsed:
+                full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
+                payload = full.get("payload", {})
+                body_text = _decode_gmail_body(payload)
+                parsed = _parse_purchase_email(body_text or snippet)
             if not parsed:
                 logger.info("Gmail sync: no parse match user=%s subject=%s snippet=%s", user.id, subject, snippet)
                 continue
@@ -425,6 +434,10 @@ def _sync_gmail_month(user, month_date, page_token=None):
         "transactions": created_transactions,
         "next_page_token": next_page_token,
     }
+
+def _sync_gmail_month(user, month_date, page_token=None):
+    start, end = _month_range(month_date)
+    return _sync_gmail_range(user, start, end, page_token=page_token)
 
 def index(request):
     # Cuando se carga la página
@@ -947,29 +960,86 @@ def gmail_sync(request):
     if not GmailCredential.objects.filter(user=request.user).exists():
         return JsonResponse({'status': 'error', 'message': 'Gmail no conectado.'}, status=400)
     month = request.GET.get("month")
+    date_only = request.GET.get("date")
     resync = request.GET.get("resync") == "1"
     page_token = request.GET.get("page_token")
+    month_date = None
     if month:
         try:
             month_date = datetime.datetime.strptime(month, "%Y-%m").date()
         except ValueError:
-            month_date = timezone.now().date()
+            month_date = None
+    if date_only:
+        try:
+            date_value = datetime.datetime.strptime(date_only, "%Y-%m-%d").date()
+        except ValueError:
+            return JsonResponse({'status': 'error', 'message': 'Fecha inválida.'}, status=400)
+        start = date_value
+        end = date_value + datetime.timedelta(days=1)
+        if resync and not page_token:
+            Transaction.objects.filter(
+                user=request.user,
+                date__gte=start,
+                date__lt=end,
+            ).delete()
+            GmailMessage.objects.filter(
+                user=request.user,
+                purchase_date__gte=start,
+                purchase_date__lt=end,
+            ).delete()
+        result = _sync_gmail_range(request.user, start, end, page_token=page_token)
     else:
-        month_date = timezone.now().date()
-    if resync and not page_token:
-        month_start, month_end = _month_range(_month_start(month_date))
-        Transaction.objects.filter(
-            user=request.user,
-            date__gte=month_start,
-            date__lt=month_end,
-        ).delete()
-        GmailMessage.objects.filter(
-            user=request.user,
-            purchase_date__gte=month_start,
-            purchase_date__lt=month_end,
-        ).delete()
-    result = _sync_gmail_month(request.user, _month_start(month_date), page_token=page_token)
+        if not month_date:
+            month_date = timezone.now().date()
+        if resync and not page_token:
+            month_start, month_end = _month_range(_month_start(month_date))
+            Transaction.objects.filter(
+                user=request.user,
+                date__gte=month_start,
+                date__lt=month_end,
+            ).delete()
+            GmailMessage.objects.filter(
+                user=request.user,
+                purchase_date__gte=month_start,
+                purchase_date__lt=month_end,
+            ).delete()
+        result = _sync_gmail_month(request.user, _month_start(month_date), page_token=page_token)
     return JsonResponse({'status': 'success', **result})
+
+def gmail_sync_cron(request):
+    token = request.headers.get("X-Sync-Token") or request.GET.get("token")
+    expected = os.environ.get("SYNC_CRON_TOKEN")
+    if not expected or token != expected:
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized.'}, status=401)
+    month_start = _month_start(timezone.now().date())
+    summaries = []
+    for credential in GmailCredential.objects.select_related("user").all():
+        user = credential.user
+        total_created = 0
+        total_reviewed = 0
+        total_parsed = 0
+        page_token = None
+        pages = 0
+        while pages < 25:
+            result = _sync_gmail_month(user, month_start, page_token=page_token)
+            total_created += result.get("created", 0)
+            total_reviewed += result.get("total", 0)
+            total_parsed += result.get("parsed", 0)
+            page_token = result.get("next_page_token")
+            pages += 1
+            if not page_token:
+                break
+        summaries.append(
+            {
+                "user_id": user.id,
+                "created": total_created,
+                "total": total_reviewed,
+                "parsed": total_parsed,
+                "pages": pages,
+                "complete": page_token is None,
+            }
+        )
+    return JsonResponse({'status': 'success', 'summaries': summaries})
 
 @csrf_exempt
 def suggest_category(request):

@@ -33,7 +33,7 @@
                         <button type="submit" class="btn bg-dark btn-lg px-3 text-light">Cambiar mes</button>
                     </form>
                 </div>
-                <div class="mini-panel" x-data="gmailSync('{{ month_label }}')">
+                <div class="mini-panel" x-data="gmailSync('{{ month_label }}', '{{ today }}')">
                     <div class="section-header">
                         <div>
                             <h3>Sincronización Gmail</h3>
@@ -245,7 +245,7 @@
         });
     }
 
-    function gmailSync(month) {
+    function gmailSync(month, today) {
         return {
             status: '',
             syncing: false,
@@ -259,7 +259,7 @@
                     let batches = 0;
                     do {
                         const url = new URL('/gmail/sync/', window.location.origin);
-                        url.searchParams.set('month', month);
+                        url.searchParams.set('date', today);
                         if (pageToken) {
                             url.searchParams.set('page_token', pageToken);
                         }
