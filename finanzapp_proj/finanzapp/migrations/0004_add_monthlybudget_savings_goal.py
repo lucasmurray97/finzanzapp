@@ -14,7 +14,8 @@ def add_savings_goal_column(apps, schema_editor):
         ]
     if "savings_goal" in columns:
         return
-    field = model._meta.get_field("savings_goal")
+    field = models.FloatField(default=0)
+    field.set_attributes_from_name("savings_goal")
     schema_editor.add_field(model, field)
 
 

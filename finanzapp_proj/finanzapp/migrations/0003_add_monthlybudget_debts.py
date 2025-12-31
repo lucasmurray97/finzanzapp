@@ -14,7 +14,8 @@ def add_debts_column(apps, schema_editor):
         ]
     if "debts" in columns:
         return
-    field = model._meta.get_field("debts")
+    field = models.FloatField(default=0)
+    field.set_attributes_from_name("debts")
     schema_editor.add_field(model, field)
 
 
