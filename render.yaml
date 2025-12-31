@@ -7,7 +7,7 @@ services:
     branch: main
     rootDir: .
     buildCommand: pip install -r requirements.txt && python finanzapp_proj/manage.py collectstatic --noinput
-    startCommand: python finanzapp_proj/manage.py migrate && gunicorn finanzapp_proj.wsgi:application
+    startCommand: python finanzapp_proj/manage.py migrate && gunicorn finanzapp_proj.wsgi:application --chdir finanzapp_proj
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
