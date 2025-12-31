@@ -2,7 +2,6 @@ services:
   - type: web
     name: finzanzapp-9xgw
     env: python
-    pythonVersion: 3.11.9
     plan: starter
     repo: https://github.com/lucasmurray97/finzanzapp
     branch: main
@@ -13,6 +12,8 @@ services:
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: ALLOWED_HOSTS
         value: "finzanzapp-9xgw.onrender.com"
       - key: CSRF_TRUSTED_ORIGINS
