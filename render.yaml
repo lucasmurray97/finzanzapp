@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: finanzapp
+    env: python
+    plan: starter
+    repo: https://github.com/lucasmurray97/finzanzapp
+    branch: main
+    rootDir: finanzapp_proj
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: gunicorn finanzapp_proj.wsgi:application
+    preDeployCommand: python manage.py migrate
+    envVars:
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: ALLOWED_HOSTS
+        value: "finanzapp.onrender.com"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://finanzapp.onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: finanzapp-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+
+databases:
+  - name: finanzapp-db
+    plan: starter
