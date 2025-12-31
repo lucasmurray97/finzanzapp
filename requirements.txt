@@ -10,6 +10,8 @@ google-auth-oauthlib==1.2.0
 gunicorn==21.2.0
 h11==0.14.0
 openai==1.40.2
+pydantic==2.11.9
+pydantic-core==2.33.2
 packaging==23.2
 psycopg2-binary==2.9.9
 sqlparse==0.4.4
