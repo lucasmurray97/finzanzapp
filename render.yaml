@@ -5,10 +5,10 @@ services:
     plan: starter
     repo: https://github.com/lucasmurray97/finzanzapp
     branch: main
-    rootDir: finanzapp_proj
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    rootDir: .
+    buildCommand: pip install -r requirements.txt && python finanzapp_proj/manage.py collectstatic --noinput
     startCommand: gunicorn finanzapp_proj.wsgi:application
-    preDeployCommand: python manage.py migrate
+    preDeployCommand: python finanzapp_proj/manage.py migrate
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
