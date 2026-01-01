@@ -441,7 +441,7 @@ def _sync_gmail_month(user, month_date, page_token=None):
 
 def index(request):
     # Cuando se carga la página
-    if request.method == 'GET':
+    if request.method in ('GET', 'HEAD'):
         #Por motivos de seguridad un usuario no autenticado no puede acceder a el listado
         if request.user.is_authenticated:
             # Se recupera el usuario
@@ -550,6 +550,7 @@ def index(request):
         transaction.save()
         # Se vuelve a la misma página
         return redirect('index')
+    return redirect('login')
 
 #-----------------------------------------------17:19------>
 
