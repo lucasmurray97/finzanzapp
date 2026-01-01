@@ -13,7 +13,7 @@ openai==1.40.2
 pydantic==2.11.9
 pydantic-core==2.33.2
 packaging==23.2
-psycopg2-binary==2.9.9
+psycopg[binary]==3.2.3
 sqlparse==0.4.4
 typing_extensions==4.12.2
 tzdata==2023.3
