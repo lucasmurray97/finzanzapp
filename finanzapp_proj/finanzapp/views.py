@@ -290,6 +290,22 @@ def _parse_amount_value(value):
         cleaned = cleaned.replace(".", "").replace(",", ".")
     return float(cleaned)
 
+def _detect_currency(text):
+    if not text:
+        return "CLP"
+    if re.search(r"\bUS\$\b|\bUSD\b|US\$\s*\d|USD\s*\d", text, re.IGNORECASE):
+        return "USD"
+    return "CLP"
+
+def _amount_to_clp(amount, currency, rate_date, context_text=""):
+    if currency != "USD":
+        return amount
+    rate = _get_usd_to_clp_rate(rate_date)
+    if rate:
+        return amount * float(rate)
+    logger.warning("Gmail sync: USD->CLP rate unavailable for %s", rate_date)
+    return amount
+
 def _parse_purchase_email(text):
     if not text:
         return None
@@ -314,14 +330,14 @@ def _parse_purchase_email(text):
     if not amount_match or not datetime_match:
         return None
     if primary_match:
-        currency = (primary_match.group(1) or "").strip().upper()
+        currency = (primary_match.group(1) or "").strip().upper() or "CLP"
         amount_raw = primary_match.group(2)
         account = primary_match.group(3).strip()
         merchant = primary_match.group(4).strip()
         date_str = primary_match.group(5)
         time_str = primary_match.group(6)
     else:
-        currency = (amount_match.group(1) or "").strip().upper()
+        currency = (amount_match.group(1) or "").strip().upper() or "CLP"
         amount_raw = amount_match.group(2)
         merchant = merchant_match.group(1).strip() if merchant_match else ""
         account = account_match.group(1).strip() if account_match else ""
@@ -337,12 +353,11 @@ def _parse_purchase_email(text):
         amount = _parse_amount_value(amount_raw)
     except ValueError:
         return None
-    if currency == "US$" or currency == "USD":
-        rate = _get_usd_to_clp_rate(purchase_date)
-        if rate:
-            amount = amount * float(rate)
+    if currency == "US$":
+        currency = "USD"
     return {
         "amount": amount,
+        "currency": currency,
         "merchant": merchant,
         "account": account,
         "description": description,
@@ -457,18 +472,38 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 )
                 description = _extract_relevant_text(raw_description) or raw_description
                 merchant = (existing_message.merchant or "").strip()
+                currency = existing_message.currency or _detect_currency(
+                    f"{existing_message.subject} {existing_message.snippet}"
+                )
+                amount_clp = _amount_to_clp(
+                    existing_message.amount,
+                    currency,
+                    existing_message.purchase_date,
+                    raw_description,
+                )
                 if not _transaction_exists(
                     user=user,
-                    amount=existing_message.amount,
+                    amount=amount_clp,
                     date=existing_message.purchase_date,
                     description=description,
                     merchant=merchant,
                 ):
+                    if currency == "USD":
+                        usd_match = Transaction.objects.filter(
+                            user=user,
+                            amount=existing_message.amount,
+                            date=existing_message.purchase_date,
+                            description__iexact=description,
+                        ).first()
+                        if usd_match:
+                            usd_match.amount = amount_clp
+                            usd_match.save(update_fields=["amount"])
+                            continue
                     category = _categorize_description(user, description)
                     transaction = Transaction.objects.create(
                         user=user,
                         description=description,
-                        amount=existing_message.amount,
+                        amount=amount_clp,
                         date=existing_message.purchase_date,
                         category=category,
                     )
@@ -503,6 +538,8 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 logger.info("Gmail sync: no parse match user=%s subject=%s snippet=%s", user.id, subject, snippet)
                 continue
             parsed_count += 1
+            currency = parsed.get("currency") or _detect_currency(f"{subject} {snippet}")
+            amount_clp = _amount_to_clp(parsed["amount"], currency, parsed["purchase_date"], snippet)
             try:
                 GmailMessage.objects.get_or_create(
                     user=user,
@@ -511,6 +548,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                         "subject": subject,
                         "snippet": snippet,
                         "amount": parsed["amount"],
+                        "currency": currency,
                         "merchant": parsed["merchant"],
                         "account": parsed["account"],
                         "purchase_date": parsed["purchase_date"],
@@ -524,7 +562,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
             merchant = (parsed.get("merchant") or "").strip()
             if not _transaction_exists(
                 user=user,
-                amount=parsed["amount"],
+                amount=amount_clp,
                 date=parsed["purchase_date"],
                 description=description,
                 merchant=merchant,
@@ -533,7 +571,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 transaction = Transaction.objects.create(
                     user=user,
                     description=description,
-                    amount=parsed["amount"],
+                    amount=amount_clp,
                     date=parsed["purchase_date"],
                     category=category,
                 )

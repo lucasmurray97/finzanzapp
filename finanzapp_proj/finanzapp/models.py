@@ -70,6 +70,7 @@ class GmailMessage(models.Model):
     subject = models.CharField(max_length=255, blank=True)
     snippet = models.TextField(blank=True)
     amount = models.FloatField(default=0)
+    currency = models.CharField(max_length=3, default="CLP")
     merchant = models.CharField(max_length=200, blank=True)
     account = models.CharField(max_length=50, blank=True)
     purchase_date = models.DateField(blank=True, null=True)
