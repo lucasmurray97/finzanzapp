@@ -472,9 +472,13 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 )
                 description = _extract_relevant_text(raw_description) or raw_description
                 merchant = (existing_message.merchant or "").strip()
-                currency = existing_message.currency or _detect_currency(
+                detected_currency = _detect_currency(
                     f"{existing_message.subject} {existing_message.snippet}"
                 )
+                currency = existing_message.currency or detected_currency
+                if detected_currency == "USD" and existing_message.currency != "USD":
+                    existing_message.currency = "USD"
+                    existing_message.save(update_fields=["currency"])
                 amount_clp = _amount_to_clp(
                     existing_message.amount,
                     currency,
