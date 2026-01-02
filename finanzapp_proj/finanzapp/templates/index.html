@@ -285,40 +285,16 @@
                 }
             },
             async resync() {
-                this.status = 'Resincronizando mes...';
+                this.status = 'Resincronizacion mensual iniciada.';
                 this.syncing = true;
-                try {
-                    let pageToken = null;
-                    let createdTotal = 0;
-                    let reviewedTotal = 0;
-                    let batches = 0;
-                    do {
-                        const url = new URL('/gmail/sync/', window.location.origin);
-                        url.searchParams.set('month', month);
-                        url.searchParams.set('resync', batches === 0 ? '1' : '0');
-                        if (pageToken) {
-                            url.searchParams.set('page_token', pageToken);
-                        }
-                        const response = await fetch(url);
-                        const data = await response.json();
-                        if (!response.ok) {
-                            this.status = data.message || 'No se pudo resincronizar Gmail.';
-                            return;
-                        }
-                        createdTotal += data.created || 0;
-                        reviewedTotal += data.total || 0;
-                        pageToken = data.next_page_token || null;
-                        batches += 1;
-                        this.status = `Resincronizadas ${createdTotal} compras (revisadas ${reviewedTotal}).`;
-                    } while (pageToken && batches < 25);
-                    if (pageToken) {
-                        this.status = `Resincronizadas ${createdTotal} compras (revisadas ${reviewedTotal}). Continúa para terminar.`;
-                    }
-                } catch (err) {
+                const url = new URL('/gmail/sync/', window.location.origin);
+                url.searchParams.set('month', month);
+                url.searchParams.set('resync', '1');
+                url.searchParams.set('async', '1');
+                fetch(url).catch(() => {
                     this.status = 'No se pudo resincronizar Gmail.';
-                } finally {
-                    this.syncing = false;
-                }
+                });
+                this.syncing = false;
             }
         };
     }

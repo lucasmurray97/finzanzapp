@@ -2,15 +2,26 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.contrib.auth import authenticate, login, logout
 from django.shortcuts import redirect, render
-from finanzapp.models import User, Transaction, Category, MonthlyBudget, SavingsWithdrawal, GmailCredential, GmailMessage
+from finanzapp.models import (
+    User,
+    Transaction,
+    Category,
+    MonthlyBudget,
+    SavingsWithdrawal,
+    GmailCredential,
+    GmailMessage,
+    CronLock,
+)
 from finanzapp.forms import RegisterUserForm, EditTransactionForm, EditCategoryForm
 from django.utils import timezone
 from django.db.models import Sum
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction, close_old_connections
 import sys
 from django.views.decorators.csrf import csrf_exempt
 import json
 import datetime
+from datetime import timedelta
+import threading
 import base64
 import os
 import re
@@ -20,6 +31,52 @@ import logging
 
 # Logs to the Django console for sync debugging.
 logger = logging.getLogger(__name__)
+
+def _acquire_cron_lock(name, timeout_seconds=1200):
+    now = timezone.now()
+    with transaction.atomic():
+        lock, created = CronLock.objects.select_for_update().get_or_create(
+            name=name,
+            defaults={"locked_at": now},
+        )
+        if not created and lock.locked_at and lock.locked_at > now - timedelta(seconds=timeout_seconds):
+            return False
+        lock.locked_at = now
+        lock.save(update_fields=["locked_at"])
+        return True
+
+def _release_cron_lock(name):
+    CronLock.objects.filter(name=name).update(locked_at=None)
+
+def _run_gmail_month_sync(user_id, month_date, resync):
+    close_old_connections()
+    try:
+        user = User.objects.get(id=user_id)
+        month_start = _month_start(month_date)
+        if resync:
+            month_range_start, month_range_end = _month_range(month_start)
+            Transaction.objects.filter(
+                user=user,
+                date__gte=month_range_start,
+                date__lt=month_range_end,
+            ).delete()
+            GmailMessage.objects.filter(
+                user=user,
+                purchase_date__gte=month_range_start,
+                purchase_date__lt=month_range_end,
+            ).delete()
+        page_token = None
+        pages = 0
+        while pages < 25:
+            result = _sync_gmail_month(user, month_start, page_token=page_token)
+            page_token = result.get("next_page_token")
+            pages += 1
+            if not page_token:
+                break
+    except Exception:
+        logger.exception("Async Gmail resync failed for user=%s", user_id)
+    finally:
+        close_old_connections()
 
 #-------------22/04/23----- Manuel y Felipe----->
 def login_1(request):
@@ -963,6 +1020,7 @@ def gmail_sync(request):
     month = request.GET.get("month")
     date_only = request.GET.get("date")
     resync = request.GET.get("resync") == "1"
+    run_async = request.GET.get("async") == "1"
     page_token = request.GET.get("page_token")
     month_date = None
     if month:
@@ -992,6 +1050,14 @@ def gmail_sync(request):
     else:
         if not month_date:
             month_date = timezone.now().date()
+        if resync and run_async:
+            worker = threading.Thread(
+                target=_run_gmail_month_sync,
+                args=(request.user.id, month_date, True),
+                daemon=True,
+            )
+            worker.start()
+            return JsonResponse({'status': 'success', 'message': 'Resync started.'})
         if resync and not page_token:
             month_start, month_end = _month_range(_month_start(month_date))
             Transaction.objects.filter(
@@ -1012,34 +1078,42 @@ def gmail_sync_cron(request):
     expected = os.environ.get("SYNC_CRON_TOKEN")
     if not expected or token != expected:
         return JsonResponse({'status': 'error', 'message': 'Unauthorized.'}, status=401)
-    month_start = _month_start(timezone.now().date())
+    lock_name = "gmail_sync_cron"
+    if not _acquire_cron_lock(lock_name):
+        return JsonResponse({'status': 'skipped', 'message': 'Cron already running.'})
+    today = timezone.now().date()
+    start = today - timedelta(days=7)
+    end = today + timedelta(days=1)
     summaries = []
-    for credential in GmailCredential.objects.select_related("user").all():
-        user = credential.user
-        total_created = 0
-        total_reviewed = 0
-        total_parsed = 0
-        page_token = None
-        pages = 0
-        while pages < 25:
-            result = _sync_gmail_month(user, month_start, page_token=page_token)
-            total_created += result.get("created", 0)
-            total_reviewed += result.get("total", 0)
-            total_parsed += result.get("parsed", 0)
-            page_token = result.get("next_page_token")
-            pages += 1
-            if not page_token:
-                break
-        summaries.append(
-            {
-                "user_id": user.id,
-                "created": total_created,
-                "total": total_reviewed,
-                "parsed": total_parsed,
-                "pages": pages,
-                "complete": page_token is None,
-            }
-        )
+    try:
+        for credential in GmailCredential.objects.select_related("user").all():
+            user = credential.user
+            total_created = 0
+            total_reviewed = 0
+            total_parsed = 0
+            page_token = None
+            pages = 0
+            while pages < 25:
+                result = _sync_gmail_range(user, start, end, page_token=page_token)
+                total_created += result.get("created", 0)
+                total_reviewed += result.get("total", 0)
+                total_parsed += result.get("parsed", 0)
+                page_token = result.get("next_page_token")
+                pages += 1
+                if not page_token:
+                    break
+            summaries.append(
+                {
+                    "user_id": user.id,
+                    "created": total_created,
+                    "total": total_reviewed,
+                    "parsed": total_parsed,
+                    "pages": pages,
+                    "complete": page_token is None,
+                }
+            )
+    finally:
+        _release_cron_lock(lock_name)
     return JsonResponse({'status': 'success', 'summaries': summaries})
 
 @csrf_exempt

@@ -78,3 +78,8 @@ class GmailMessage(models.Model):
 
     class Meta:
         unique_together = ("user", "gmail_id")
+
+
+class CronLock(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    locked_at = models.DateTimeField(blank=True, null=True)
