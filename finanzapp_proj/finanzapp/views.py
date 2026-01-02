@@ -233,17 +233,13 @@ def _extract_relevant_text(text):
 
 _USD_TO_CLP_CACHE = {}
 
-def _get_usd_to_clp_rate(rate_date):
-    cache_key = rate_date.strftime("%Y-%m-%d")
-    cached = _USD_TO_CLP_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+def _fetch_usd_to_clp_exchangerate_host(date_key):
     params = urllib.parse.urlencode(
         {
             "from": "USD",
             "to": "CLP",
             "amount": 1,
-            "date": cache_key,
+            "date": date_key,
         }
     )
     url = f"https://api.exchangerate.host/convert?{params}"
@@ -251,9 +247,35 @@ def _get_usd_to_clp_rate(rate_date):
         with urllib.request.urlopen(url, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8"))
             rate = payload.get("result")
+            return float(rate) if rate is not None else None
     except Exception:
-        logger.exception("Gmail sync: failed to fetch USD->CLP rate for %s", cache_key)
-        rate = None
+        logger.exception("Gmail sync: exchangerate.host failed for %s", date_key)
+        return None
+
+def _fetch_usd_to_clp_mindicador(rate_date):
+    date_key = rate_date.strftime("%d-%m-%Y")
+    url = f"https://mindicador.cl/api/dolar/{date_key}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            series = payload.get("serie") or []
+            if not series:
+                return None
+            return float(series[0].get("valor"))
+    except Exception:
+        logger.exception("Gmail sync: mindicador.cl failed for %s", date_key)
+        return None
+
+def _get_usd_to_clp_rate(rate_date):
+    cache_key = rate_date.strftime("%Y-%m-%d")
+    cached = _USD_TO_CLP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    rate = _fetch_usd_to_clp_exchangerate_host(cache_key)
+    if rate is None:
+        rate = _fetch_usd_to_clp_mindicador(rate_date)
+    if rate is None:
+        rate = 930.0
     _USD_TO_CLP_CACHE[cache_key] = rate
     return rate
 
