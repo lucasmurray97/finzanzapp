@@ -27,6 +27,8 @@ import os
 import re
 import html
 import logging
+import urllib.request
+import urllib.parse
 # Create your views here.
 
 # Logs to the Django console for sync debugging.
@@ -229,17 +231,58 @@ def _extract_relevant_text(text):
         return match.group(1).strip().rstrip(".") + "."
     return ""
 
+_USD_TO_CLP_CACHE = {}
+
+def _get_usd_to_clp_rate(rate_date):
+    cache_key = rate_date.strftime("%Y-%m-%d")
+    cached = _USD_TO_CLP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    params = urllib.parse.urlencode(
+        {
+            "from": "USD",
+            "to": "CLP",
+            "amount": 1,
+            "date": cache_key,
+        }
+    )
+    url = f"https://api.exchangerate.host/convert?{params}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            rate = payload.get("result")
+    except Exception:
+        logger.exception("Gmail sync: failed to fetch USD->CLP rate for %s", cache_key)
+        rate = None
+    _USD_TO_CLP_CACHE[cache_key] = rate
+    return rate
+
+def _parse_amount_value(value):
+    cleaned = value.strip()
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        cleaned = cleaned.replace(".", "").replace(",", ".")
+    return float(cleaned)
+
 def _parse_purchase_email(text):
     if not text:
         return None
     normalized = " ".join(text.split())
     try:
         primary_match = re.search(
-            r"compra por \$?([\d\.,]+)\s+con (?:Tarjeta de Crédito|cargo a Cuenta)\s+(\*+\d+)\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})",
+            r"compra por\s+(?:(US\$|USD)\s*)?\$?([\d\.,]+)\s+con (?:Tarjeta de Crédito|cargo a Cuenta)\s+(\*+\d+)\s+en\s+(.+?)\s+el\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})",
             normalized,
             re.IGNORECASE,
         )
-        amount_match = re.search(r"compra por \$?([\d\.,]+)", normalized, re.IGNORECASE)
+        amount_match = re.search(
+            r"compra por\s+(?:(US\$|USD)\s*)?\$?([\d\.,]+)",
+            normalized,
+            re.IGNORECASE,
+        )
         merchant_match = re.search(r"en\s+(.+?)\s+el\s+\d{2}/\d{2}/\d{4}", normalized, re.IGNORECASE)
         account_match = re.search(r"(?:Tarjeta de Crédito|Cuenta)\s+(\*+\d+)", normalized, re.IGNORECASE)
         datetime_match = re.search(r"el\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})", normalized)
@@ -249,24 +292,33 @@ def _parse_purchase_email(text):
     if not amount_match or not datetime_match:
         return None
     if primary_match:
-        amount_raw = primary_match.group(1).replace(".", "").replace(",", "")
-        account = primary_match.group(2).strip()
-        merchant = primary_match.group(3).strip()
-        date_str = primary_match.group(4)
-        time_str = primary_match.group(5)
+        currency = (primary_match.group(1) or "").strip().upper()
+        amount_raw = primary_match.group(2)
+        account = primary_match.group(3).strip()
+        merchant = primary_match.group(4).strip()
+        date_str = primary_match.group(5)
+        time_str = primary_match.group(6)
     else:
-        amount_raw = amount_match.group(1).replace(".", "").replace(",", "")
+        currency = (amount_match.group(1) or "").strip().upper()
+        amount_raw = amount_match.group(2)
         merchant = merchant_match.group(1).strip() if merchant_match else ""
         account = account_match.group(1).strip() if account_match else ""
         date_str = datetime_match.group(1)
         time_str = datetime_match.group(2)
-    amount = float(amount_raw)
     description = _extract_relevant_text(text) or merchant
     try:
         purchase_date = datetime.datetime.strptime(date_str, "%d/%m/%Y").date()
         purchase_time = datetime.datetime.strptime(time_str, "%H:%M").time()
     except ValueError:
         return None
+    try:
+        amount = _parse_amount_value(amount_raw)
+    except ValueError:
+        return None
+    if currency == "US$" or currency == "USD":
+        rate = _get_usd_to_clp_rate(purchase_date)
+        if rate:
+            amount = amount * float(rate)
     return {
         "amount": amount,
         "merchant": merchant,
