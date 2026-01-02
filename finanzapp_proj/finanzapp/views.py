@@ -279,8 +279,19 @@ def _get_usd_to_clp_rate(rate_date):
     _USD_TO_CLP_CACHE[cache_key] = rate
     return rate
 
-def _parse_amount_value(value):
+def _parse_amount_value(value, currency):
     cleaned = value.strip()
+    currency = (currency or "CLP").upper()
+    if currency == "USD":
+        if "," in cleaned and "." in cleaned:
+            if cleaned.rfind(".") > cleaned.rfind(","):
+                cleaned = cleaned.replace(",", "")
+            else:
+                cleaned = cleaned.replace(".", "").replace(",", ".")
+        elif "," in cleaned:
+            cleaned = cleaned.replace(",", ".")
+        return float(cleaned)
+    # CLP-style: dot as thousands, comma as decimal
     if "," in cleaned and "." in cleaned:
         if cleaned.rfind(",") > cleaned.rfind("."):
             cleaned = cleaned.replace(".", "").replace(",", ".")
@@ -288,6 +299,10 @@ def _parse_amount_value(value):
             cleaned = cleaned.replace(",", "")
     elif "," in cleaned:
         cleaned = cleaned.replace(".", "").replace(",", ".")
+    elif "." in cleaned:
+        parts = cleaned.split(".")
+        if len(parts[-1]) == 3:
+            cleaned = "".join(parts)
     return float(cleaned)
 
 def _detect_currency(text):
@@ -350,7 +365,7 @@ def _parse_purchase_email(text):
     except ValueError:
         return None
     try:
-        amount = _parse_amount_value(amount_raw)
+        amount = _parse_amount_value(amount_raw, currency)
     except ValueError:
         return None
     if currency == "US$":
