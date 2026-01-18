@@ -361,7 +361,7 @@ def _parse_purchase_email(text):
     description = _extract_relevant_text(text) or merchant
     try:
         purchase_date = datetime.datetime.strptime(date_str, "%d/%m/%Y").date()
-        purchase_time = datetime.datetime.strptime(time_str, "%H:%M").time()
+        datetime.datetime.strptime(time_str, "%H:%M")
     except ValueError:
         return None
     try:
@@ -377,7 +377,6 @@ def _parse_purchase_email(text):
         "account": account,
         "description": description,
         "purchase_date": purchase_date,
-        "purchase_time": purchase_time,
     }
 
 def _categorize_description(user, description):
@@ -418,20 +417,34 @@ def _categorize_description(user, description):
             return Category.objects.filter(user=user, name="ninguna").first()
     return Category.objects.filter(user=user, name="ninguna").first()
 
-def _transaction_exists(user, amount, date, description, merchant=""):
+def _transaction_exists(user, amount, date, description, merchant="", email_received_at=None):
     if merchant:
-        return Transaction.objects.filter(
+        query = Transaction.objects.filter(
             user=user,
             amount=amount,
             date=date,
             description__icontains=merchant,
-        ).exists()
-    return Transaction.objects.filter(
-        user=user,
-        amount=amount,
-        date=date,
-        description__iexact=description,
-    ).exists()
+        )
+    else:
+        query = Transaction.objects.filter(
+            user=user,
+            amount=amount,
+            date=date,
+            description__iexact=description,
+        )
+    if email_received_at is not None:
+        query = query.filter(email_received_at=email_received_at)
+    return query.exists()
+
+def _parse_gmail_received_at(message_payload):
+    internal_date = message_payload.get("internalDate")
+    if not internal_date:
+        return None
+    try:
+        timestamp_ms = int(internal_date)
+    except (TypeError, ValueError):
+        return None
+    return datetime.datetime.fromtimestamp(timestamp_ms / 1000, tz=datetime.timezone.utc)
 
 def _get_gmail_service(user):
     credential = GmailCredential.objects.filter(user=user).first()
@@ -506,6 +519,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                     date=existing_message.purchase_date,
                     description=description,
                     merchant=merchant,
+                    email_received_at=existing_message.email_received_at,
                 ):
                     if currency == "USD":
                         usd_match = Transaction.objects.filter(
@@ -524,6 +538,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                         description=description,
                         amount=amount_clp,
                         date=existing_message.purchase_date,
+                        email_received_at=existing_message.email_received_at,
                         category=category,
                     )
                     created += 1
@@ -543,6 +558,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 metadataHeaders=["Subject"],
             ).execute()
             payload = meta.get("payload", {})
+            email_received_at = _parse_gmail_received_at(meta)
             headers = payload.get("headers", [])
             subject = _get_header(headers, "Subject")
             snippet = meta.get("snippet", "")
@@ -551,6 +567,8 @@ def _sync_gmail_range(user, start, end, page_token=None):
             if not parsed:
                 full = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
                 payload = full.get("payload", {})
+                if email_received_at is None:
+                    email_received_at = _parse_gmail_received_at(full)
                 body_text = _decode_gmail_body(payload)
                 parsed = _parse_purchase_email(body_text or snippet)
             if not parsed:
@@ -571,7 +589,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                         "merchant": parsed["merchant"],
                         "account": parsed["account"],
                         "purchase_date": parsed["purchase_date"],
-                        "purchase_time": parsed["purchase_time"],
+                        "email_received_at": email_received_at,
                     },
                 )
             except IntegrityError:
@@ -585,6 +603,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                 date=parsed["purchase_date"],
                 description=description,
                 merchant=merchant,
+                email_received_at=email_received_at,
             ):
                 category = _categorize_description(user, description)
                 transaction = Transaction.objects.create(
@@ -592,6 +611,7 @@ def _sync_gmail_range(user, start, end, page_token=None):
                     description=description,
                     amount=amount_clp,
                     date=parsed["purchase_date"],
+                    email_received_at=email_received_at,
                     category=category,
                 )
                 created += 1

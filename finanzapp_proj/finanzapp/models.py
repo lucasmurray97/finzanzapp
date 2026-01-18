@@ -35,6 +35,8 @@ class Transaction(models.Model):
     amount = models.FloatField(default=0)
     # Fecha de la transacción
     date = models.DateField(default=timezone.now().strftime("%Y-%m-%d"))
+    # Fecha/hora en que se recibio el email (opcional, usada para deduplicar mails)
+    email_received_at = models.DateTimeField(blank=True, null=True)
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="transactions", blank=True, null=True)
 
 
@@ -74,7 +76,7 @@ class GmailMessage(models.Model):
     merchant = models.CharField(max_length=200, blank=True)
     account = models.CharField(max_length=50, blank=True)
     purchase_date = models.DateField(blank=True, null=True)
-    purchase_time = models.TimeField(blank=True, null=True)
+    email_received_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
